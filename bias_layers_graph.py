@@ -62,8 +62,8 @@ def text_to_sentiment(sentence):
   if result['label'] == "NEGATIVE": return -result['score']
   raise ValueError("Unknown result label: " + result['label'])
 
-df1 = pd.read_csv('llama_dss_one_positive_dataset.csv')
-df2 = pd.read_csv('llama_dss_one_negative_dataset.csv')
+df1 = pd.read_csv('data/llama_dss_one_positive_dataset.csv')
+df2 = pd.read_csv('data/llama_dss_one_negative_dataset.csv')
 
 def batch_dataset(df, batch_size=1):
     sentence, corrupted = [df[col].tolist() for col in ['sentence', 'corrupted']]
@@ -873,7 +873,7 @@ for i, (edge_id, edge) in enumerate(remaining_edges_pos[:10]):
     print(f"  Score: {abs(edge.score)}")
 
 # getting top 3000 edges
-df_edges = pd.read_csv('topnedgesllama.csv')
+df_edges = pd.read_csv('data/topnedgesllama.csv')
 
 top3000_edges_pos_llama=[]
 for i, (edge_id,edge) in enumerate(remaining_edges_pos[:3000]):
