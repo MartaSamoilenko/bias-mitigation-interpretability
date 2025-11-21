@@ -1,0 +1,16 @@
+condition,percent_unfrozen,trainable_params,biased_profession_count
+attn,0.1,51232000,79
+attn,0.2,102464000,16
+attn,0.3,143449600,82
+attn,0.4,194681600,1
+attn,0.5,245913600,33
+mlp,0.1,204880000,74
+mlp,0.2,409760000,0
+mlp,0.3,553176000,58
+mlp,0.4,655616000,0
+mlp,0.5,758056000,0
+attn_mlp,0.1,256112000,56
+attn_mlp,0.2,512224000,0
+attn_mlp,0.3,696625600,1
+attn_mlp,0.4,850297600,0
+attn_mlp,0.5,1003969600,0

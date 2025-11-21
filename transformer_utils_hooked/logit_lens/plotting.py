@@ -1,0 +1,277 @@
+from functools import partial
+from transformer_lens import HookedTransformer
+
+import torch
+import numpy as np
+import scipy.special
+import seaborn as sns
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+import colorcet  # noqa
+import torch
+import torch.nn.functional as F
+
+from ..util.python_utils import make_print_if_verbose
+from .hooks import make_lens_hooks, clear_lens_hooks
+from .layer_names import make_layer_names, Node
+
+from .hooks import make_bias_lens_hooks, clear_bias_lens_hooks
+
+def get_sentiment_token_ids(tokenizer, positive_words, negative_words):
+    pos_ids = [tokenizer.encode(word, add_special_tokens=False) for word in positive_words]
+    neg_ids = [tokenizer.encode(word, add_special_tokens=False) for word in negative_words]
+
+    pos_ids = sorted(list(set([item for sublist in pos_ids for item in sublist])))
+    neg_ids = sorted(list(set([item for sublist in neg_ids for item in sublist])))
+
+    return pos_ids, neg_ids
+
+
+def calculate_bias_score_per_token(logits: torch.Tensor, pos_token_ids: list, neg_token_ids: list) -> torch.Tensor:
+    """
+    Calculates a bias score for each token position.
+
+    Args:
+        logits: Logits from a model layer, shape [batch, seq_len, d_vocab]
+        pos_token_ids: List of token IDs considered positive.
+        neg_token_ids: List of token IDs considered negative.
+
+    Returns:
+        A tensor of bias scores, shape [batch, seq_len]
+    """
+    device = logits.device
+    pos_token_ids = torch.tensor(pos_token_ids, device=device)
+    neg_token_ids = torch.tensor(neg_token_ids, device=device)
+
+    probs = F.softmax(logits, dim=-1)
+
+    prob_positive = torch.index_select(probs, -1, pos_token_ids).sum(dim=-1)  # Shape: [batch, seq_len]
+    prob_negative = torch.index_select(probs, -1, neg_token_ids).sum(dim=-1)  # Shape: [batch, seq_len]
+
+    return prob_positive - prob_negative
+
+def plot_bias_lens(
+        model: HookedTransformer,
+        tokenizer,
+        input_ids: torch.Tensor,
+        pos_token_ids: list,
+        neg_token_ids: list,
+        start_ix: int,
+        end_ix: int,
+        verbose: bool = False,
+        **kwargs,
+):
+    layer_nodes = make_layer_names(model, **kwargs)
+
+    bias_metric_fn = partial(calculate_bias_score_per_token, pos_token_ids=pos_token_ids, neg_token_ids=neg_token_ids)
+
+    make_bias_lens_hooks(
+        model,
+        layer_nodes=layer_nodes,
+        bias_metric_fn=bias_metric_fn,
+        start_ix=start_ix,
+        end_ix=end_ix,
+        verbose=verbose,
+    )
+
+    layer_names_str = [node.name for node in layer_nodes]
+
+    with torch.no_grad():
+        _ = model(input_ids)
+
+    layer_scores = np.concatenate(
+        [model._layer_bias_scores[name] for name in layer_names_str],
+        axis=0,
+    )
+
+    clear_bias_lens_hooks(model)
+
+    to_show = layer_scores[::-1]
+    fig = plt.figure(figsize=(1.5 * to_show.shape[1], 0.375 * to_show.shape[0]))
+
+    sns.heatmap(
+        to_show,
+        annot=True,
+        fmt=".2f",
+        cmap="RdBu_r",
+        center=0,
+    )
+
+    ax = plt.gca()
+    _num2tok = np.vectorize(partial(num2tok, tokenizer=tokenizer, quotemark="'"), otypes=[str])
+    input_tokens_str = _num2tok(input_ids[0].cpu().numpy())
+
+    ylabels = [name for name in layer_names_str][::-1]
+    ax.set_yticklabels(ylabels, rotation=0)
+
+    ax.set_xticklabels(input_tokens_str[start_ix:end_ix], rotation=0)
+    ax.xaxis.tick_top()
+    ax.xaxis.set_label_position('top')
+    plt.title("Bias Lens: (P(positive) - P(negative))")
+    plt.show()
+
+
+def collect_logits(model, input_ids, layer_names):
+    """
+    Runs the model to trigger the lens hooks and collects the captured logits.
+    """
+    with torch.no_grad():
+        _ = model(input_ids)
+
+
+    layer_logits = np.concatenate(
+        [model._layer_logits[name] for name in layer_names],
+        axis=0,
+    )
+    return layer_logits, layer_names
+
+def postprocess_logits(layer_logits):
+    layer_preds = layer_logits.argmax(axis=-1)
+    layer_probs = scipy.special.softmax(layer_logits, axis=-1)
+    return layer_preds, layer_probs
+
+def get_value_at_preds(values, preds):
+    return np.stack([values[:, j, preds[j]] for j in range(preds.shape[-1])], axis=-1)
+
+def num2tok(x, tokenizer, quotemark=""):
+    return quotemark + str(tokenizer.decode([x])) + quotemark
+
+def clipmin(x, clip):
+    return np.clip(x, a_min=clip, a_max=None)
+
+def kl_summand(p, q, clip=1e-16):
+    p, q = clipmin(p, clip), clipmin(q, clip)
+    return p * np.log(p / q)
+
+def kl_div(p, q, axis=-1, clip=1e-16):
+    return np.sum(kl_summand(p, q, clip=clip), axis=axis)
+
+def _plot_logit_lens(
+    layer_logits,
+    layer_preds,
+    layer_probs,
+    tokenizer,
+    input_ids,
+    start_ix,
+    layer_names,
+    probs=False,
+    ranks=False,
+    kl=False,
+    top_down=False,
+):
+    end_ix = start_ix + layer_logits.shape[1]
+    final_preds = layer_preds[-1]
+    aligned_preds = layer_preds
+
+    if kl:
+        clip = 1 / (10 * layer_probs.shape[-1])
+        final_probs = layer_probs[-1]
+        to_show = kl_div(final_probs, layer_probs, clip=clip)
+    else:
+        numeric_input = layer_probs if probs else layer_logits
+        to_show = get_value_at_preds(numeric_input, final_preds)
+        if ranks:
+            to_show = (numeric_input >= to_show[:, :, np.newaxis]).sum(axis=-1)
+
+    _num2tok = np.vectorize(
+        partial(num2tok, tokenizer=tokenizer, quotemark="'"), otypes=[str]
+    )
+    aligned_texts = _num2tok(aligned_preds)
+    to_show = to_show[::-1]
+    aligned_texts = aligned_texts[::-1]
+
+    print(aligned_texts)
+    fig = plt.figure(figsize=(1.5 * to_show.shape[1], 0.375 * to_show.shape[0]))
+
+    plot_kwargs = {"annot": aligned_texts, "fmt": ""}
+    if kl:
+        plot_kwargs.update({"cmap": "cet_linear_protanopic_deuteranopic_kbw_5_98_c40_r", "annot": True, "fmt": ".1f"})
+    elif ranks:
+        vmax = 2000
+        plot_kwargs.update({"cmap": "Blues", "norm": mpl.colors.LogNorm(vmin=1, vmax=vmax), "annot": True})
+    elif probs:
+        plot_kwargs.update({"cmap": "Blues_r", "vmin": 0, "vmax": 1})
+    else:
+        vmin, vmax = np.percentile(to_show, [5, 95])
+        plot_kwargs.update({"cmap": "cet_linear_protanopic_deuteranopic_kbw_5_98_c40", "vmin": vmin, "vmax": vmax})
+
+    sns.heatmap(to_show, **plot_kwargs)
+    ax = plt.gca()
+    input_tokens_str = _num2tok(input_ids[0].cpu().numpy())
+    ylabels = layer_names[::-1]
+    ax.set_yticklabels(ylabels, rotation=0)
+
+    ax_top = ax.twiny()
+    padw = 0.5 / to_show.shape[1]
+    ax_top.set_xticks(np.linspace(padw, 1 - padw, to_show.shape[1]))
+
+    ax_inputs, ax_targets = (ax_top, ax) if top_down else (ax, ax_top)
+    if top_down:
+        ax.invert_yaxis()
+
+    ax_inputs.set_xticklabels(input_tokens_str[start_ix:end_ix], rotation=0)
+    starred = [
+        f"* {true}" if pred == true else f"  {true}"
+        for pred, true in zip(aligned_texts[0], input_tokens_str[start_ix + 1 : end_ix + 1])
+    ]
+    ax_targets.set_xticklabels(starred, rotation=0)
+
+
+def plot_logit_lens(
+    model: HookedTransformer,
+    tokenizer,
+    input_ids: torch.Tensor,
+    start_ix: int,
+    end_ix: int,
+    probs: bool = False,
+    ranks: bool = False,
+    kl: bool = False,
+    verbose: bool = False,
+    **kwargs,
+):
+    """
+    Draws "logit lens" plots for a HookedTransformer model using the component-based view.
+    """
+    layer_nodes = make_layer_names(model, **kwargs)
+    #
+    # print("*"*50)
+    # print(layer_nodes)
+    # print("*"*50)
+
+    make_lens_hooks(
+        model,
+        layer_nodes=layer_nodes,
+        start_ix=start_ix,
+        end_ix=end_ix,
+        verbose=verbose,
+    )
+
+    layer_names_str = [node.name for node in layer_nodes]
+
+    # print("*" * 50)
+    # print(layer_names_str)
+    # print("*" * 50)
+
+    layer_logits, collected_names = collect_logits(
+        model,
+        input_ids,
+        layer_names=layer_names_str,
+    )
+    # print(layer_logits)
+    clear_lens_hooks(model)
+
+    layer_preds, layer_probs = postprocess_logits(layer_logits)
+
+    _plot_logit_lens(
+        layer_logits=layer_logits,
+        layer_preds=layer_preds,
+        layer_probs=layer_probs,
+        tokenizer=tokenizer,
+        input_ids=input_ids,
+        start_ix=start_ix,
+        layer_names=collected_names,
+        probs=probs,
+        ranks=ranks,
+        kl=kl,
+        top_down=kwargs.get("top_down", False),
+    )
