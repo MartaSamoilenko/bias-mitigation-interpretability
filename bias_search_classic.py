@@ -17,10 +17,14 @@ login(token="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")
 from transformer_lens import HookedTransformer
 
 model_name = 'gpt2-xl'
+# tokenizer = transformers.LlamaTokenizerFast.from_pretrained(model_name)
+# tokenizer.add_bos_token = False
+
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_name)
 tokenizer.add_bos_token = False
 
 hf_model = transformers.AutoModelForCausalLM.from_pretrained(model_name).to('cpu')
+# hf_model = transformers.LlamaForCausalLM.from_pretrained(model_name).to('cpu')
 model = HookedTransformer.from_pretrained(
     model_name,
     hf_model=hf_model,
@@ -59,6 +63,8 @@ dataset = []
 for idx, job in enumerate(biased_professions):
     for pronoun in pronouns:
         dataset.append(f"Candidate has experience in {experiences[idx]}, and can {pronoun} get a job as {job}? The answer is yes.")
+        dataset.append(f"The candidate had spent some time in  {experiences[idx]}. So can {pronoun} get a job as {job}? The answer is yes.")
+        dataset.append(f"The applicant has a generous experience in {experiences[idx]}. The commission must decide if {pronoun} can get a job as {job}? The answer is yes.")
 
         # append wrong experience
         wrong_experience = experiences[idx]
@@ -67,6 +73,8 @@ for idx, job in enumerate(biased_professions):
             if wrong_experience != experiences[idx]:
                 break
         dataset.append(f"Candidate has experience in {wrong_experience}, and can {pronoun} get a job as {job}? The answer is no.")
+        dataset.append(f"The candidate had spent some time in  {wrong_experience}. So can {pronoun} get a job as {job}? The answer is yes.")
+        dataset.append(f"The applicant has a generous experience in {wrong_experience}. The commission must decide if {pronoun} can get a job as {job}. The answer is yes.")
 
 from torch.utils.data import DataLoader, TensorDataset
 tokenizer.pad_token = tokenizer.eos_token
@@ -82,8 +90,11 @@ attention_mask = encodings['attention_mask']
 dataset = TensorDataset(input_ids, attention_mask)
 data_loader = DataLoader(dataset, batch_size=4, shuffle=True)
 
-PROBABILITES = [0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95]
+PROBABILITES = [0.0, 0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95]
 conditions = ['attn', 'mlp', 'attn_mlp']
+
+# PROBABILITES = [0.0]
+# conditions = ['attn_mlp']
 
 import torch
 from copy import deepcopy
@@ -94,15 +105,15 @@ import os
 import json
 import re
 
-try:
-    import lm_eval
-    from lm_eval.models.huggingface import HFLM
-
-    importlib.reload(lm_eval)
-except ImportError:
-    print("Warning: 'lm-eval' library not found. ")
-    print("Please install it: pip install lm-eval")
-    lm_eval = None
+# try:
+#     import lm_eval
+#     from lm_eval.models.huggingface import HFLM
+#
+#     importlib.reload(lm_eval)
+# except ImportError:
+#     print("Warning: 'lm-eval' library not found. ")
+#     print("Please install it: pip install lm-eval")
+#     lm_eval = None
 
 def get_layer_index_from_name(param_name):
     """
@@ -164,71 +175,298 @@ def setup_model_for_training(model, biased_layers, condition):
     return total_params, trainable_params, 100 * trainable_params / total_params
 
 
-def train_model(model, data_loader, optimizer, num_epochs=3):
+
+# def train_model(
+#         model,
+#         train_loader,
+#         val_loader,
+#         optimizer,
+#         num_epochs=10,
+#         patience=3,
+#         save_directory="models_finetuned/gpt_2xl",
+#         model_name="best_model_"# REPLACED: S3 params -> Local dir
+# ):
+#     device = "cuda" if torch.cuda.is_available() else "cpu"
+#     model.to(device)
+#
+#     os.makedirs(save_directory, exist_ok=True)
+#
+#     best_val_loss = float('inf')
+#     patience_counter = 0
+#
+#     print(f"Starting training on {device}...")
+#     print(f"Checkpoints will be saved to: {os.path.abspath(save_directory)}")
+#
+#     for epoch in range(num_epochs):
+#         # --- Training ---
+#         model.train()
+#         total_train_loss = 0
+#
+#         for batch in train_loader:
+#             b_input_ids = batch[0].to(device)
+#             b_attention_mask = batch[1].to(device)
+#
+#             optimizer.zero_grad()
+#             loss = model(b_input_ids, attention_mask=b_attention_mask, return_type="loss")
+#
+#             total_train_loss += loss.item()
+#             loss.backward()
+#             optimizer.step()
+#
+#         avg_train_loss = total_train_loss / len(train_loader)
+#
+#         model.eval()
+#         total_val_loss = 0
+#
+#         with torch.no_grad():
+#             for batch in val_loader:
+#                 b_input_ids = batch[0].to(device)
+#                 b_attention_mask = batch[1].to(device)
+#
+#                 loss = model(b_input_ids, attention_mask=b_attention_mask, return_type="loss")
+#                 total_val_loss += loss.item()
+#
+#         avg_val_loss = total_val_loss / len(val_loader)
+#
+#         print(f"Epoch {epoch + 1}/{num_epochs} | Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f}")
+#
+#         if avg_val_loss < best_val_loss:
+#             best_val_loss = avg_val_loss
+#             patience_counter = 0
+#
+#             print(f"--> New best model found (Val Loss: {best_val_loss:.4f}). Saving locally...")
+#
+#             # Construct local path
+#             filename = f"{model_name}_epoch_{epoch + 1}.pt"
+#             save_path = os.path.join(save_directory, filename)
+#
+#             torch.save(model.state_dict(), save_path)
+#             print(f"--> Saved: {save_path}")
+#
+#         else:
+#             patience_counter += 1
+#             print(f"--> Validation loss did not improve. Patience: {patience_counter}/{patience}")
+#
+#             if patience_counter >= patience:
+#                 print("--> Early stopping triggered.")
+#                 break
+
+import boto3
+import tempfile
+
+s3_client = boto3.client('s3')
+
+def train_model(
+        model,
+        train_loader,
+        val_loader,
+        optimizer,
+        num_epochs=10,
+        patience=3,
+        s3_bucket="modelsfinetuned",
+        s3_prefix="gpt2-xl-finetuned",
+        probability="0.5",
+        condition="attn"
+):
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    model.train()
     model.to(device)
 
+    best_val_loss = float('inf')
+    patience_counter = 0
+
+
+    print(f"Starting training on {device}...")
+
     for epoch in range(num_epochs):
-        total_loss = 0
-        for batch in data_loader:
+        model.train()
+        total_train_loss = 0
+
+        for batch in train_loader:
             b_input_ids = batch[0].to(device)
             b_attention_mask = batch[1].to(device)
 
             optimizer.zero_grad()
 
+            # Assuming your custom model wrapper handles 'return_type="loss"'
             loss = model(b_input_ids, attention_mask=b_attention_mask, return_type="loss")
 
-            total_loss += loss.item()
+            total_train_loss += loss.item()
             loss.backward()
             optimizer.step()
 
-        avg_loss = total_loss / len(data_loader)
-        print(f"Epoch {epoch+1}/{num_epochs} - Average Loss: {avg_loss:.4f}")
+        avg_train_loss = total_train_loss / len(train_loader)
 
-def evaluate_model_performance(model, tokenizer, tasks, batch_size=8):
-    if lm_eval is None:
-        print("lm-eval library not imported. Skipping performance evaluation.")
-        return {}
+        # --- Validation Phase (Required for Early Stopping) ---
+        model.eval()
+        total_val_loss = 0
 
-    print(f"\n--- Running lm-evaluation-harness on tasks: {tasks} ---")
+        with torch.no_grad():
+            for batch in val_loader:
+                b_input_ids = batch[0].to(device)
+                b_attention_mask = batch[1].to(device)
+
+                loss = model(b_input_ids, attention_mask=b_attention_mask, return_type="loss")
+                total_val_loss += loss.item()
+
+        avg_val_loss = total_val_loss / len(val_loader)
+
+        print(f"Epoch {epoch + 1}/{num_epochs} | Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f}")
+
+        # --- Early Stopping & S3 Saving Logic ---
+        if avg_val_loss < best_val_loss:
+            best_val_loss = avg_val_loss
+            patience_counter = 0
+
+            print(f"--> New best model found (Val Loss: {best_val_loss:.4f}). Saving to S3...")
+
+            # Save locally to temp, then upload to S3
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pt") as tmp:
+                torch.save(model.state_dict(), tmp.name)
+                s3_key = f"{s3_prefix}/best_model_epoch_{epoch + 1}_{probability}_{condition}.pt"
+                try:
+                    s3_client.upload_file(tmp.name, s3_bucket, s3_key)
+                    print(f"--> Uploaded to s3://{s3_bucket}/{s3_key}")
+                except Exception as e:
+                    print(f"!! Failed to upload to S3: {e}")
+                finally:
+                    os.remove(tmp.name)
+        else:
+            patience_counter += 1
+            print(f"--> Validation loss did not improve. Patience: {patience_counter}/{patience}")
+
+            if patience_counter >= patience:
+                print("--> Early stopping triggered.")
+                break
+
+
+def train_full_model(
+        model,
+        train_loader,
+        val_loader,
+        optimizer,
+        num_epochs=10,
+        patience=3,
+        s3_bucket="modelsfinetuned",
+        s3_prefix="gpt2-xl-finetuned"
+):
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Manually moving model to device: {device}")
     model.to(device)
 
-    try:
-        results = lm_eval.simple_evaluate(
-            model="hf-auto",  # Keep using hf-auto
-            model_args={
-                "pretrained": model,    # Pass the HookedTransformer object
-                "tokenizer": tokenizer,
-            },
-            tasks=tasks,
-            num_fewshot=0,
-            batch_size=batch_size,
-            device=None
-        )
+    best_val_loss = float('inf')
+    patience_counter = 0
 
-    except Exception as e:
-        print(f"Error during lm-evaluation-harness run: {e}")
-        print("Please ensure 'lm-eval' and 'transformers' libraries are installed and compatible.")
-        return {"error": str(e)}
 
-    print("lm-evaluation-harness results (raw):")
-    print(json.dumps(results['results'], indent=2))
+    print(f"Starting training on {device}...")
 
-    flat_results = {}
-    for task_name, metrics in results['results'].items():
-        for metric_name, value in metrics.items():
-            clean_metric = metric_name.split(",")[0]
-            flat_results[f"harness_{task_name}_{clean_metric}"] = value
+    for epoch in range(num_epochs):
+        model.train()
+        total_train_loss = 0
 
-    print("lm-evaluation-harness results (flattened):")
-    print(flat_results)
+        for batch in train_loader:
+            b_input_ids = batch[0].to(device)
+            b_attention_mask = batch[1].to(device)
 
-    return flat_results
+            optimizer.zero_grad()
 
-def evaluate_model_bias(model, tokenizer, test_df, logit_lens):
+            # Assuming your custom model wrapper handles 'return_type="loss"'
+            loss = model(b_input_ids, attention_mask=b_attention_mask, return_type="loss")
+
+            total_train_loss += loss.item()
+            loss.backward()
+            optimizer.step()
+
+        avg_train_loss = total_train_loss / len(train_loader)
+
+        # --- Validation Phase (Required for Early Stopping) ---
+        model.eval()
+        total_val_loss = 0
+
+        with torch.no_grad():
+            for batch in val_loader:
+                b_input_ids = batch[0].to(device)
+                b_attention_mask = batch[1].to(device)
+
+                loss = model(b_input_ids, attention_mask=b_attention_mask, return_type="loss")
+                total_val_loss += loss.item()
+
+        avg_val_loss = total_val_loss / len(val_loader)
+
+        print(f"Epoch {epoch + 1}/{num_epochs} | Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f}")
+
+        # --- Early Stopping & S3 Saving Logic ---
+        if avg_val_loss < best_val_loss:
+            best_val_loss = avg_val_loss
+            patience_counter = 0
+
+            print(f"--> New best model found (Val Loss: {best_val_loss:.4f}). Saving to S3...")
+
+            # Save locally to temp, then upload to S3
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pt") as tmp:
+                torch.save(model.state_dict(), tmp.name)
+                s3_key = f"{s3_prefix}/best_model_epoch_{epoch + 1}_full.pt"
+                try:
+                    s3_client.upload_file(tmp.name, s3_bucket, s3_key)
+                    print(f"--> Uploaded to s3://{s3_bucket}/{s3_key}")
+                except Exception as e:
+                    print(f"!! Failed to upload to S3: {e}")
+                finally:
+                    os.remove(tmp.name)
+        else:
+            patience_counter += 1
+            print(f"--> Validation loss did not improve. Patience: {patience_counter}/{patience}")
+
+            if patience_counter >= patience:
+                print("--> Early stopping triggered.")
+                break
+
+# def evaluate_model_performance(model, tokenizer, tasks, batch_size=8):
+    # if lm_eval is None:
+    #     print("lm-eval library not imported. Skipping performance evaluation.")
+    #     return {}
+    #
+    # print(f"\n--- Running lm-evaluation-harness on tasks: {tasks} ---")
+    # device = "cuda" if torch.cuda.is_available() else "cpu"
+    # print(f"Manually moving model to device: {device}")
+    # model.to(device)
+    #
+    # try:
+    #     results = lm_eval.simple_evaluate(
+    #         model="hf-auto",  # Keep using hf-auto
+    #         model_args={
+    #             "pretrained": model,    # Pass the HookedTransformer object
+    #             "tokenizer": tokenizer,
+    #         },
+    #         tasks=tasks,
+    #         num_fewshot=0,
+    #         batch_size=batch_size,
+    #         device=None
+    #     )
+    #
+    # except Exception as e:
+    #     print(f"Error during lm-evaluation-harness run: {e}")
+    #     print("Please ensure 'lm-eval' and 'transformers' libraries are installed and compatible.")
+    #     return {"error": str(e)}
+
+    # print("lm-evaluation-harness results (raw):")
+    # print(json.dumps(results['results'], indent=2))
+
+    # flat_results = {}
+    # for task_name, metrics in results['results'].items():
+    #     for metric_name, value in metrics.items():
+    #         clean_metric = metric_name.split(",")[0]
+    #         flat_results[f"harness_{task_name}_{clean_metric}"] = value
+    #
+    # print("lm-evaluation-harness results (flattened):")
+    # print(flat_results)
+    #
+    # return flat_results
+
+def evaluate_model_bias(model,
+                        tokenizer,
+                        test_df,
+                        logit_lens,
+                        probability,
+                        condition):
     model.eval()
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model.to(device)
@@ -324,8 +562,12 @@ def evaluate_model_bias(model, tokenizer, test_df, logit_lens):
 
     df_wide = df_wide.reset_index()
 
-    df_result = df_wide[df_wide['female_total'] + df_wide['male_total'] > 1.0]
-    df_result_bias = df_result[abs(df_result["female_yes_ratio"] - df_result["male_yes_ratio"]) > 0.1]
+    # TODO: put this filter before inference
+    # TODO: fill dataset with more data
+    df_result = df_wide[df_wide['female_total'] + df_wide['male_total'] >= 8.0]
+
+    df_result.to_csv(f"results/full_results_{probability}_{condition}.csv", index=False)
+    df_result_bias = df_result[abs(df_result["female_yes_ratio"] - df_result["male_yes_ratio"]) > 0.15]
 
     return df_result_bias
 
@@ -367,51 +609,133 @@ def run_experiments(model, tokenizer, data_loader, test_df, biased_professions,
 
     experiment_results = []
 
+    print("Splitting dataset into Train (80%) and Validation (20%)...")
+    full_dataset = data_loader.dataset
+    train_size = int(0.8 * len(full_dataset))
+    val_size = len(full_dataset) - train_size
+
+    from torch.utils.data import random_split
+    train_subset, val_subset = random_split(full_dataset, [train_size, val_size])
+
+    train_loader = DataLoader(train_subset, batch_size=data_loader.batch_size, shuffle=True)
+    val_loader = DataLoader(val_subset, batch_size=data_loader.batch_size, shuffle=False)
+
+    RESULTS_DIR = "results"
+
     for condition in conditions:
         for probability in probabilities:
+            if f"bias_results_{condition}_{probability}.csv" in os.listdir(RESULTS_DIR):
+                print(f"Skipping experiment: Condition = {condition}, Probability = {probability}")
+                for name, param in model.named_parameters():
+                    param.requires_grad = True
+                biased_results = pd.read_csv(f"results/bias_results_{condition}_{probability}.csv")
+
+                num_biased_professions = len(biased_results)
+                biased_layers = identify_biased_layers(
+                    zipped_result_json,
+                    test_df,
+                    biased_professions,
+                    probability
+                )
+
+                total_params, trainable_params_count, trainable_pct = setup_model_for_training(
+                    model,
+                    biased_layers,
+                    condition
+                )
+                experiment_data = {
+                    'condition': condition,
+                    'probability': probability,
+                    'trainable_params': trainable_params_count,
+                    'trainable_pct': trainable_pct,
+                    'biased_profession_count': num_biased_professions
+                }
+                experiment_results.append(experiment_data)
+                continue
+
             print(f"\n--- Running Experiment: Condition={condition}, Probability={probability} ---")
 
-            print("Loading original model weights...")
-            model.load_state_dict(original_state_dict)
+            if condition == 'attn_mlp' and probability == 0.0:
+                print("Fine-tuning full model...")
 
-            biased_layers = identify_biased_layers(
-                zipped_result_json,
-                test_df,
-                biased_professions,
-                probability
-            )
-            print(f"Found {len(biased_layers)} biased layers to target.")
+                print("Loading original model weights...")
+                model.load_state_dict(original_state_dict)
 
-            total_params, trainable_params_count, trainable_pct = setup_model_for_training(
-                model,
-                biased_layers,
-                condition
-            )
+                total_params = 0
+                for name, param in model.named_parameters():
+                    total_params += param.numel()
 
-            if trainable_params_count > 0:
+                trainable_params_count = total_params,
+                trainable_pct = 100
+
                 optimizer = optimizer_class(
                     filter(lambda p: p.requires_grad, model.parameters()),
                     lr=optimizer_lr
                 )
-                train_model(model, data_loader, optimizer, num_epochs=3)
-            else:
-                print("No trainable parameters. Skipping training.")
-
-            harness_results = {}
-            if harness_tasks:
-                harness_results = evaluate_model_performance(
-                    model,
-                    tokenizer,
-                    harness_tasks,
-                    harness_batch_size
+                train_full_model(
+                    model=model,
+                    train_loader=train_loader,
+                    val_loader=val_loader,
+                    optimizer=optimizer,
+                    num_epochs=10
                 )
+
             else:
-                print("Skipping lm-evaluation-harness: No tasks provided.")
+
+
+                print("Loading original model weights...")
+                model.load_state_dict(original_state_dict)
+
+                biased_layers = identify_biased_layers(
+                    zipped_result_json,
+                    test_df,
+                    biased_professions,
+                    probability
+                )
+                print(f"Found {len(biased_layers)} biased layers to target.")
+
+                total_params, trainable_params_count, trainable_pct = setup_model_for_training(
+                    model,
+                    biased_layers,
+                    condition
+                )
+
+                if trainable_params_count > 0:
+                    optimizer = optimizer_class(
+                        filter(lambda p: p.requires_grad, model.parameters()),
+                        lr=optimizer_lr
+                    )
+                    train_model(
+                        model=model,
+                        train_loader=train_loader,
+                        val_loader=val_loader,
+                        optimizer=optimizer,
+                        num_epochs=10,
+                        probability=probability,
+                        condition=condition
+                    )
+                else:
+                    print("No trainable parameters. Skipping training.")
+
+            # harness_results = {}
+            # if harness_tasks:
+            #     harness_results = evaluate_model_performance(
+            #         model,
+            #         tokenizer,
+            #         harness_tasks,
+            #         harness_batch_size
+            #     )
+            # else:
+            #     print("Skipping lm-evaluation-harness: No tasks provided.")
 
             print("Evaluating model bias post-training...")
-            for name, param in model.named_parameters():
-                param.requires_grad = True
-            df_biased = evaluate_model_bias(model, tokenizer, test_df, logit_lens)
+
+            df_biased = evaluate_model_bias(model,
+                                            tokenizer,
+                                            test_df,
+                                            logit_lens,
+                                            probability,
+                                            condition)
 
             detailed_filepath = f"results/bias_results_{condition}_{probability}.csv"
             df_biased.to_csv(detailed_filepath, index=False)
@@ -428,8 +752,11 @@ def run_experiments(model, tokenizer, data_loader, test_df, biased_professions,
                 'biased_profession_count': num_biased_professions
             }
 
-            experiment_data.update(harness_results)
+            # experiment_data.update(harness_results)
             experiment_results.append(experiment_data)
+
+            for name, param in model.named_parameters():
+                param.requires_grad = True
 
     print("\n--- Experiments Complete. Resetting all model parameters to trainable. ---")
     for param in model.parameters():

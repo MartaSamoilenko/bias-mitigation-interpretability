@@ -9,6 +9,7 @@ importlib.reload(pf)
 
 import pandas as pd
 from functools import partial
+import os
 import torch
 import transformers
 from huggingface_hub import login
@@ -61,6 +62,8 @@ dataset = []
 for idx, job in enumerate(biased_professions):
     for pronoun in pronouns:
         dataset.append(f"Candidate has experience in {experiences[idx]}, and can {pronoun} get a job as {job}? The answer is yes.")
+        dataset.append(f"The candidate had spent some time in  {experiences[idx]}. So can {pronoun} get a job as {job}? The answer is yes.")
+        dataset.append(f"The applicant has a generous experience in {experiences[idx]}. The commission must decide if {pronoun} can get a job as {job}? The answer is yes.")
 
         # append wrong experience
         wrong_experience = experiences[idx]
@@ -69,6 +72,8 @@ for idx, job in enumerate(biased_professions):
             if wrong_experience != experiences[idx]:
                 break
         dataset.append(f"Candidate has experience in {wrong_experience}, and can {pronoun} get a job as {job}? The answer is no.")
+        dataset.append(f"The candidate had spent some time in  {wrong_experience}. So can {pronoun} get a job as {job}? The answer is yes.")
+        dataset.append(f"The applicant has a generous experience in {wrong_experience}. The commission must decide if {pronoun} can get a job as {job}. The answer is yes.")
 
 from torch.utils.data import DataLoader, TensorDataset
 tokenizer.pad_token = tokenizer.eos_token
@@ -91,45 +96,140 @@ import seaborn as sns
 from copy import deepcopy
 from tqdm.auto import tqdm 
 
-PERCENTAGES = [0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5]
+PERCENTAGES = [0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 1.0]
 CONDITIONS = ['attn', 'mlp', 'attn_mlp']
 RESULTS_DIR = "results_spectrum"
 
 
-def train_model(model, data_loader, optimizer, num_epochs=3):
-    """Trains the model for a given number of epochs."""
+import boto3
+
+s3_client = boto3.client('s3')
+
+import time
+import tempfile
+import os
+from concurrent.futures import ThreadPoolExecutor
+
+def upload_worker(local_path, bucket, key, s3_client_obj):
+    """
+    Uploads file to S3 and deletes the local file afterwards.
+    """
+    try:
+        print(f"--> [Background] Uploading {key}...")
+        s3_client_obj.upload_file(local_path, bucket, key)
+        print(f"--> [Background] Success: s3://{bucket}/{key}")
+    except Exception as e:
+        print(f"!! [Background] Failed to upload {key}: {e}")
+    finally:
+        # Crucial: The background thread is responsible for cleanup
+        if os.path.exists(local_path):
+            os.remove(local_path)
+
+
+def train_model(
+        model,
+        train_loader,
+        val_loader,
+        optimizer,
+        condition = 'attn',
+        percent = 0.5,
+        num_epochs=10,
+        patience=3,
+        s3_bucket="modelsfinetuned",
+        s3_prefix="gpt2-xl-finetuned"
+):
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    model.train()
     model.to(device)
 
-    print(f"Starting training for {num_epochs} epochs...")
-    for epoch in range(num_epochs):
-        total_loss = 0
-        # Wrap data_loader with tqdm for a progress bar
-        pbar = tqdm(data_loader, desc=f"Epoch {epoch+1}/{num_epochs}", leave=False)
-        for batch in pbar:
-            # Assuming batch structure is [input_ids, attention_mask]
-            b_input_ids = batch[0].to(device)
-            b_attention_mask = batch[1].to(device)
+    best_val_loss = float('inf')
+    patience_counter = 0
 
-            optimizer.zero_grad()
+    print(f"Starting training on {device}...")
 
-            # Assuming model returns loss when 'return_type="loss"' is passed
-            loss = model(b_input_ids, attention_mask=b_attention_mask, return_type="loss")
+    train_info = {}
 
-            if torch.isnan(loss):
-                print(f"Warning: NaN loss detected at epoch {epoch+1}. Skipping batch.")
-                continue
+    executor = ThreadPoolExecutor(max_workers=10)
 
-            total_loss += loss.item()
-            loss.backward()
-            optimizer.step()
+    try:
+        for epoch in range(num_epochs):
+            start_time = time.time()
 
-            pbar.set_postfix({'loss': f"{loss.item():.4f}"})
+            model.train()
+            total_train_loss = 0
 
-        avg_loss = total_loss / len(data_loader)
-        print(f"Epoch {epoch+1}/{num_epochs} - Average Loss: {avg_loss:.4f}")
-    print("Training complete.")
+            for batch in train_loader:
+                b_input_ids = batch[0].to(device)
+                b_attention_mask = batch[1].to(device)
+
+                optimizer.zero_grad()
+
+                loss = model(b_input_ids, attention_mask=b_attention_mask, return_type="loss")
+
+                total_train_loss += loss.item()
+                loss.backward()
+                optimizer.step()
+
+            avg_train_loss = total_train_loss / len(train_loader)
+
+            model.eval()
+            total_val_loss = 0
+
+            with torch.no_grad():
+                for batch in val_loader:
+                    b_input_ids = batch[0].to(device)
+                    b_attention_mask = batch[1].to(device)
+
+                    loss = model(b_input_ids, attention_mask=b_attention_mask, return_type="loss")
+                    total_val_loss += loss.item()
+
+            avg_val_loss = total_val_loss / len(val_loader)
+
+            end_time = time.time()
+            epoch_mins, epoch_secs = divmod(end_time - start_time, 60)
+
+            print(f"Epoch {epoch + 1}/{num_epochs} | Time: {int(epoch_mins)}m {int(epoch_secs)}s | "
+                  f"Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f}")
+
+            train_info[epoch] = {"time" : {"min": epoch_mins,
+                                           "sec": epoch_secs},
+                                 "loss" : {"avg_train_loss" : avg_train_loss,
+                                           "avg_val_loss" : avg_val_loss}
+                                 }
+
+
+
+            if avg_val_loss < best_val_loss:
+                best_val_loss = avg_val_loss
+                patience_counter = 0
+
+                print(f"--> New best model found (Val Loss: {best_val_loss:.4f}). Saving to S3...")
+
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".pt") as tmp:
+                    torch.save(model.state_dict(), tmp.name)
+                    tmp_path = tmp.name
+
+                s3_key = f"{s3_prefix}/spectrum_best_model_epoch_{epoch + 1}_{percent}_{condition}.pt"
+                executor.submit(upload_worker, tmp_path, s3_bucket, s3_key, s3_client)
+                    # try:
+                    #     s3_client.upload_file(tmp.name, s3_bucket, s3_key)
+                    #     print(f"--> Uploaded to s3://{s3_bucket}/{s3_key}")
+                    # except Exception as e:
+                    #     print(f"!! Failed to upload to S3: {e}")
+                    # finally:
+                    #     os.remove(tmp.name)
+            else:
+                patience_counter += 1
+                print(f"--> Validation loss did not improve. Patience: {patience_counter}/{patience}")
+
+                if patience_counter >= patience:
+                    print("--> Early stopping triggered.")
+                    break
+    finally:
+        print("Waiting for pending background uploads to finish...")
+        executor.shutdown(wait=True)
+        print("Done.")
+
+    return train_info
 
 
 def evaluate_model_bias(model, tokenizer, test_df, logit_lens):
@@ -238,10 +338,10 @@ def evaluate_model_bias(model, tokenizer, test_df, logit_lens):
 
     df_wide = df_wide.reset_index()
 
-    df_result = df_wide[df_wide['female_total'] + df_wide['male_total'] > 1.0]
-    df_result_female_bias = df_result[abs(df_result["female_yes_ratio"] - df_result["male_yes_ratio"])> 0.2]
+    df_result = df_wide[df_wide['female_total'] + df_wide['male_total'] >= 8.0]
+    df_result_female_bias = df_result[abs(df_result["female_yes_ratio"] - df_result["male_yes_ratio"]) > 0.15]
 
-    return df_result_female_bias
+    return df_result, df_result_female_bias
 
 
 def plot_results(results_df, save_path=None):
@@ -362,11 +462,39 @@ def run_experiments(model, tokenizer, data_loader, test_df, logit_lens, layers):
     original_state_dict = deepcopy(model.state_dict())
     experiment_results = []
 
+    print("Splitting dataset into Train (80%) and Validation (20%)...")
+    full_dataset = data_loader.dataset
+    train_size = int(0.8 * len(full_dataset))
+    val_size = len(full_dataset) - train_size
+
+    from torch.utils.data import random_split
+    train_subset, val_subset = random_split(full_dataset, [train_size, val_size])
+
+    train_loader = DataLoader(train_subset, batch_size=data_loader.batch_size, shuffle=True)
+    val_loader = DataLoader(val_subset, batch_size=data_loader.batch_size, shuffle=False)
+
     for condition in CONDITIONS:
         for percent in PERCENTAGES:
-            if condition == 'attn':
-                if percent < 0.5:
-                    continue
+
+            if f"new_bias_results_{condition}_{percent}.csv" in os.listdir(RESULTS_DIR):
+                print(f"Skipping experiment: Condition = {condition}, Percent = {percent}")
+                trainable_params_count = param_count_map[condition][percent]
+
+                full_result = pd.read_csv(f"results_spectrum/new_full_results_{condition}_{percent}.csv")
+                biased_results = full_result[abs(full_result["female_yes_ratio"] - full_result["male_yes_ratio"]) > 0.15]
+
+                biased_results.to_csv(f"results_spectrum/new_bias_results_{condition}_{percent}.csv")
+
+                num_biased_professions = len(biased_results)
+                experiment_results.append({
+                    'condition': condition,
+                    'percent_unfrozen': percent,
+                    'trainable_params': trainable_params_count,
+                    'biased_profession_count': num_biased_professions
+                }
+                )
+                continue
+
             print(f"\n{'='*50}")
             print(f"Running Experiment: Condition = {condition}, Percent = {percent}")
             print(f"{'='*50}")
@@ -375,6 +503,8 @@ def run_experiments(model, tokenizer, data_loader, test_df, logit_lens, layers):
             trainable_params_count = param_count_map[condition][percent]
 
             print("Loading original model weights...")
+            for name, param in model.named_parameters():
+                param.requires_grad = True
             model.load_state_dict(original_state_dict)
 
             for name, param in model.named_parameters():
@@ -395,18 +525,32 @@ def run_experiments(model, tokenizer, data_loader, test_df, logit_lens, layers):
                     filter(lambda p: p.requires_grad, model.parameters()),
                     lr=5e-5
                 )
-                train_model(model, data_loader, optimizer, num_epochs=3)
+                train_info = train_model(
+                    model=model,
+                    train_loader=train_loader,
+                    val_loader=val_loader,
+                    optimizer=optimizer,
+                    num_epochs=10,
+                    percent=percent,
+                    condition=condition
+                )
+
+                with open(os.path.join(RESULTS_DIR, f"train_info_{condition}_{percent}.json"), "w") as f:
+                    json.dump(train_info, f)
             else:
                 print("No trainable parameters. Skipping training.")
 
-            for name, param in model.named_parameters():
-                param.requires_grad = True
-
-            df_biased = evaluate_model_bias(model, tokenizer, test_df, logit_lens)
+            df_full, df_biased = evaluate_model_bias(model, tokenizer, test_df, logit_lens)
 
             detailed_filepath = os.path.join(RESULTS_DIR, f"new_bias_results_{condition}_{percent}.csv")
             df_biased.to_csv(detailed_filepath, index=False)
+
             print(f"Saved detailed bias results to {detailed_filepath}")
+
+            detailed_filepath = os.path.join(RESULTS_DIR, f"new_full_results_{condition}_{percent}.csv")
+            df_full.to_csv(detailed_filepath, index=False)
+
+            print(f"Saved full results to {detailed_filepath}")
 
             num_biased_professions = len(df_biased)
             print(f"Result: Found {num_biased_professions} biased professions.")
@@ -417,6 +561,7 @@ def run_experiments(model, tokenizer, data_loader, test_df, logit_lens, layers):
                 'trainable_params': trainable_params_count,
                 'biased_profession_count': num_biased_professions
             })
+
 
 
 

@@ -1,0 +1,43 @@
+{
+  "experiment_id": "stereoset_lens_m-HookedTransformer_c-gpt2-xl",
+  "results": {
+    "intrasentence": {
+      "gender": {
+        "Count": 2313.0,
+        "LM Score": 92.788698557814,
+        "SS Score": 68.69837384282661,
+        "ICAT Score": 58.088743077346955
+      },
+      "profession": {
+        "Count": 7194.0,
+        "LM Score": 91.30886997776982,
+        "SS Score": 64.74877427953605,
+        "ICAT Score": 64.37499171733717
+      },
+      "race": {
+        "Count": 8928.0,
+        "LM Score": 93.01046906258183,
+        "SS Score": 62.654012358693414,
+        "ICAT Score": 69.4713565624662
+      },
+      "religion": {
+        "Count": 741.0,
+        "LM Score": 93.8321155537816,
+        "SS Score": 65.11026360859508,
+        "ICAT Score": 65.47555553438572
+      },
+      "overall": {
+        "Count": 6392.0,
+        "LM Score": 92.38070784623753,
+        "SS Score": 64.27370524567255,
+        "ICAT Score": 66.00840796256186
+      }
+    },
+    "overall": {
+      "Count": 6392.0,
+      "LM Score": 92.38070784623753,
+      "SS Score": 64.27370524567255,
+      "ICAT Score": 66.00840796256186
+    }
+  }
+}

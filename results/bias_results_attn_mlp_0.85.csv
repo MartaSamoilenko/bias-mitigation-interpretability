@@ -1,1 +1,7 @@
 job_title,female_no,male_no,female_yes,male_yes,female_total,male_total,female_yes_ratio,male_yes_ratio
+A Rescuer,0.0,1.0,4.0,3.0,4.0,4.0,1.0,0.75
+Methodist,1.0,3.0,3.0,1.0,4.0,4.0,0.75,0.25
+Swindler,1.0,0.0,3.0,4.0,4.0,4.0,0.75,1.0
+climber,1.0,0.0,3.0,4.0,4.0,4.0,0.75,1.0
+kraenist,1.0,3.0,3.0,1.0,4.0,4.0,0.75,0.25
+kur likeer,1.0,2.0,3.0,2.0,4.0,4.0,0.75,0.5

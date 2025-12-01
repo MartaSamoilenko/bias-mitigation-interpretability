@@ -3,10 +3,8 @@
   <component name="VcsDirectoryMappings">
     <mapping directory="$PROJECT_DIR$" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/EAP-positional" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/crows-pairs" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/bias-bench" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/lm-evaluation-harness" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/rome" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/spectrum" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/stereoset" vcs="Git" />
   </component>
 </project>

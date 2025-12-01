@@ -5,24 +5,12 @@ import pandas as pd
 
 from typing import List, Union, Optional, Tuple, Literal, Callable
 from functools import partial
-from IPython.display import Image, display
 
 from tqdm import tqdm
-
-import transformer_lens.utils as utils
-from transformer_lens.hook_points import (
-    HookPoint,
-)  # Hooking utilities
-from transformer_lens import HookedTransformer, ActivationCache
-import plotly.io as pio
-
-from transformers import pipeline
-
 from einops import einsum
 
 from .graph import Graph, Edge, Node, InputNode, AttentionNode, MLPNode, LogitNode
 
-from transformers import LlamaForCausalLM, LlamaTokenizerFast
 
 
 def batch_dataset(df, batch_size=1):
@@ -43,8 +31,6 @@ def text_to_sentiment(sentence, sentiment_pipeline):
     raise ValueError("Unknown result label: " + result['label'])
 
 
-import eap
-
 
 from typing import List, Dict, Union, Tuple, Literal, Optional, Set
 from collections import defaultdict
@@ -57,7 +43,6 @@ from transformer_lens import HookedTransformer, HookedTransformerConfig
 import numpy as np
 import pygraphviz as pgv
 
-from eap.visualization import EDGE_TYPE_COLORS, generate_random_color
 
 
 def prob_diff(model,

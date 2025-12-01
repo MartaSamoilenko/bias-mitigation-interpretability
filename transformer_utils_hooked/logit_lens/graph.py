@@ -1,5 +1,5 @@
 from typing import List, Dict, Union, Tuple, Literal, Optional, Set
-from eap.visualization import EDGE_TYPE_COLORS, generate_random_color
+# from eap.visualization import EDGE_TYPE_COLORS, generate_random_color
 import torch
 import numpy as np
 
@@ -11,7 +11,7 @@ import json
 
 import pygraphviz as pgv
 
-from eap.visualization import EDGE_TYPE_COLORS
+# from eap.visualization import EDGE_TYPE_COLORS
 
 
 class Node:
@@ -100,7 +100,8 @@ class Edge:
             self.hook = child.in_hook
     def get_color(self):
         if self.qkv is not None:
-            return EDGE_TYPE_COLORS[self.qkv]
+            return "#FF00FF"
+            # return EDGE_TYPE_COLORS[self.qkv]
         elif self.score < 0:
             return "#FF00FF"
         else:
