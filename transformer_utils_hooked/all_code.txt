@@ -1,0 +1,1521 @@
+\n# ===== ./__init__.py =====
+# from .low_memory import low_memory_load
+from . import util
+from . import partial_forward
+
+__all__ = [
+    # 'low_memory_load',
+    'util',
+    'partial_forward',
+]
+\n# ===== ./partial_forward/__init__.py =====
+import warnings
+from transformer_lens import HookedTransformer
+
+VALIDATE_OUTPUT_NOT_FOUND_MSG = """Some `output_names` were not found in the model's hook dictionary.
+
+To see valid output names, try `model.hook_dict.keys()`.
+
+Names not found: {names}"""
+
+def _validate_output_names(model: HookedTransformer, output_names: list[str]):
+    """Checks if the provided output names are valid hook points in the model."""
+    if output_names is None:
+        return
+
+    valid_names = model.hook_dict.keys()
+    problem_names = [name for name in output_names if name not in valid_names]
+
+    if len(problem_names) > 0:
+        raise ValueError(VALIDATE_OUTPUT_NOT_FOUND_MSG.format(names=problem_names))
+
+
+def partial_forward(
+    model: HookedTransformer,
+    output_names: list[str],
+    *args,
+    **kwargs,
+):
+    """
+    Computes a partial forward pass on a HookedTransformer model and returns intermediate activations.
+
+    This is a wrapper around `model.run_with_cache`.
+
+    Args:
+        model: The HookedTransformer model.
+        output_names: A list of hook names for which to return activations.
+        *args: Positional arguments to be passed to the model's forward pass (e.g., input_ids).
+        **kwargs: Keyword arguments to be passed to the model's forward pass.
+
+    Returns:
+        A dictionary mapping hook names from `output_names` to their corresponding activation tensors.
+    """
+    _validate_output_names(model, output_names)
+
+    if 'names_filter' in kwargs:
+         warnings.warn("`partial_forward` was passed `names_filter` but will ignore it in favor of `output_names`.")
+         del kwargs['names_filter']
+
+    cache, _ = model.run_with_cache(
+        *args,
+        names_filter=output_names,
+        **kwargs
+    )
+
+    return cache\n# ===== ./util/__init__.py =====
+from . import module_utils
+from . import python_utils
+
+__all__ = [
+    'module_utils',
+    'python_utils',
+]\n# ===== ./util/module_utils.py =====
+from .python_utils import make_print_if_verbose
+
+
+def get_child_module_by_names(module, names):
+    obj = module
+    for getter in map(lambda name: lambda obj: getattr(obj, name), names):
+        obj = getter(obj)
+    return obj
+
+
+def get_leaf_modules(module, verbose=False):
+    vprint = make_print_if_verbose(verbose)
+
+    names = []
+    leaves = []
+    handled = set()
+
+    for param_name in dict(module.named_parameters()).keys():
+        mod_name = param_name.rpartition(".")[0]
+        mod = get_child_module_by_names(module, mod_name.split("."))
+
+        if mod_name in handled:
+            continue
+
+        vprint((param_name, mod_name, mod))
+
+        names.append(mod_name)
+        leaves.append(mod)
+        handled.add(mod_name)
+
+    return names, leaves
+\n# ===== ./util/tfm_utils.py =====
+import json
+
+import transformers.file_utils
+from transformers.models.auto.configuration_auto import CONFIG_MAPPING
+
+
+def fix_config_with_missing_model_type(model_name, config_path):
+    with open(config_path, 'r', encoding='utf-8') as f:
+        config = json.load(f)
+
+    model_type = config.get('model_type')
+
+    # cf https://github.com/huggingface/transformers/blob/v4.5.1/src/transformers/models/auto/configuration_auto.py#L403
+    #
+    # we reproduce that logic here, but save the fixed config to the json file
+    # so it will work more robustly, i.e. even if you are not using `AutoConfig`
+    if model_type is None:
+        for pattern, config_class in CONFIG_MAPPING.items():
+            if pattern in model_name:
+                config['model_type'] = config_class.model_type
+
+    with open(config_path, 'w', encoding='utf-8') as f:
+        json.dump(config, f)
+
+
+def get_local_path_from_huggingface_cdn(key, filename):
+    archive_file = transformers.file_utils.hf_bucket_url(
+        key,
+        filename=filename,
+    )
+
+    resolved_archive_file = transformers.file_utils.cached_path(
+        archive_file,
+    )
+    return resolved_archive_file
+
+
+def huggingface_model_local_paths(model_name):
+    config_path = get_local_path_from_huggingface_cdn(model_name, "config.json")
+
+    fix_config_with_missing_model_type(model_name, config_path)
+
+    model_path = get_local_path_from_huggingface_cdn(model_name, "pytorch_model.bin")
+
+    return config_path, model_path
+
+
+def normalize_inconsistent_state_dict_keys(state_dict):
+    normalized = {}
+
+    for k in state_dict.keys():
+        if k.startswith("transformer."):
+            normalized[k] = state_dict[k]
+        else:
+            normalized["transformer." + k] = state_dict[k]
+    return normalized
+\n# ===== ./util/python_utils.py =====
+def make_print_if_verbose(verbose: bool):
+    def vprint(*args, **kwargs):
+        if verbose:
+            print(*args, **kwargs)
+
+    return vprint
+\n# ===== ./logit_lens/__init__.py =====
+from .hooks import make_lens_hooks, clear_lens_hooks
+from . import plotting
+from .plotting import plot_logit_lens
+from .bias_layers_graph import (batch_dataset,
+                                text_to_sentiment,
+                                prob_diff_new,
+                                evaluate_baseline,
+                                evaluate_graph,
+                                get_npos_input_lengths,
+                                make_hooks_and_matrices,
+                                get_scores,
+                                get_scores_ig,
+                                attribute)
+
+from .graph import Graph, Node, Edge, AttentionNode, InputNode, MLPNode, LogitNode
+
+__all__ = [
+    'make_lens_hooks',
+    'clear_lens_hooks',
+    'plotting',
+    'plot_logit_lens',
+    'batch_dataset',
+    'text_to_sentiment',
+    'prob_diff_new',
+    'evaluate_baseline',
+    'evaluate_graph',
+    'get_npos_input_lengths',
+    'make_hooks_and_matrices',
+    'get_scores',
+    'get_scores_ig',
+    'attribute',
+    'Graph',
+    'Node',
+    'Edge',
+    'MLPNode',
+    'LogitNode',
+    'AttentionNode',
+    'InputNode',
+]
+\n# ===== ./logit_lens/plotting.py =====
+from functools import partial
+from transformer_lens import HookedTransformer
+
+import torch
+import numpy as np
+import scipy.special
+import seaborn as sns
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+import colorcet  # noqa
+
+from ..util.python_utils import make_print_if_verbose
+from .hooks import make_lens_hooks, clear_lens_hooks
+from .layer_names import make_layer_names, Node
+
+
+def collect_logits(model, input_ids, layer_names):
+    """
+    Runs the model to trigger the lens hooks and collects the captured logits.
+    """
+    with torch.no_grad():
+        _ = model(input_ids)
+
+
+    layer_logits = np.concatenate(
+        [model._layer_logits[name] for name in layer_names],
+        axis=0,
+    )
+    return layer_logits, layer_names
+
+def postprocess_logits(layer_logits):
+    layer_preds = layer_logits.argmax(axis=-1)
+    layer_probs = scipy.special.softmax(layer_logits, axis=-1)
+    return layer_preds, layer_probs
+
+def get_value_at_preds(values, preds):
+    return np.stack([values[:, j, preds[j]] for j in range(preds.shape[-1])], axis=-1)
+
+def num2tok(x, tokenizer, quotemark=""):
+    return quotemark + str(tokenizer.decode([x])) + quotemark
+
+def clipmin(x, clip):
+    return np.clip(x, a_min=clip, a_max=None)
+
+def kl_summand(p, q, clip=1e-16):
+    p, q = clipmin(p, clip), clipmin(q, clip)
+    return p * np.log(p / q)
+
+def kl_div(p, q, axis=-1, clip=1e-16):
+    return np.sum(kl_summand(p, q, clip=clip), axis=axis)
+
+def _plot_logit_lens(
+    layer_logits,
+    layer_preds,
+    layer_probs,
+    tokenizer,
+    input_ids,
+    start_ix,
+    layer_names,
+    probs=False,
+    ranks=False,
+    kl=False,
+    top_down=False,
+):
+    end_ix = start_ix + layer_logits.shape[1]
+    final_preds = layer_preds[-1]
+    aligned_preds = layer_preds
+
+    if kl:
+        clip = 1 / (10 * layer_probs.shape[-1])
+        final_probs = layer_probs[-1]
+        to_show = kl_div(final_probs, layer_probs, clip=clip)
+    else:
+        numeric_input = layer_probs if probs else layer_logits
+        to_show = get_value_at_preds(numeric_input, final_preds)
+        if ranks:
+            to_show = (numeric_input >= to_show[:, :, np.newaxis]).sum(axis=-1)
+
+    _num2tok = np.vectorize(
+        partial(num2tok, tokenizer=tokenizer, quotemark="'"), otypes=[str]
+    )
+    aligned_texts = _num2tok(aligned_preds)
+    to_show = to_show[::-1]
+    aligned_texts = aligned_texts[::-1]
+    fig = plt.figure(figsize=(1.5 * to_show.shape[1], 0.375 * to_show.shape[0]))
+
+    plot_kwargs = {"annot": aligned_texts, "fmt": ""}
+    if kl:
+        plot_kwargs.update({"cmap": "cet_linear_protanopic_deuteranopic_kbw_5_98_c40_r", "annot": True, "fmt": ".1f"})
+    elif ranks:
+        vmax = 2000
+        plot_kwargs.update({"cmap": "Blues", "norm": mpl.colors.LogNorm(vmin=1, vmax=vmax), "annot": True})
+    elif probs:
+        plot_kwargs.update({"cmap": "Blues_r", "vmin": 0, "vmax": 1})
+    else:
+        vmin, vmax = np.percentile(to_show, [5, 95])
+        plot_kwargs.update({"cmap": "cet_linear_protanopic_deuteranopic_kbw_5_98_c40", "vmin": vmin, "vmax": vmax})
+
+    sns.heatmap(to_show, **plot_kwargs)
+    ax = plt.gca()
+    input_tokens_str = _num2tok(input_ids[0].cpu().numpy())
+    ylabels = layer_names[::-1]
+    ax.set_yticklabels(ylabels, rotation=0)
+
+    ax_top = ax.twiny()
+    padw = 0.5 / to_show.shape[1]
+    ax_top.set_xticks(np.linspace(padw, 1 - padw, to_show.shape[1]))
+
+    ax_inputs, ax_targets = (ax_top, ax) if top_down else (ax, ax_top)
+    if top_down:
+        ax.invert_yaxis()
+
+    ax_inputs.set_xticklabels(input_tokens_str[start_ix:end_ix], rotation=0)
+    starred = [
+        f"* {true}" if pred == true else f"  {true}"
+        for pred, true in zip(aligned_texts[0], input_tokens_str[start_ix + 1 : end_ix + 1])
+    ]
+    ax_targets.set_xticklabels(starred, rotation=0)
+
+
+def plot_logit_lens(
+    model: HookedTransformer,
+    tokenizer,
+    input_ids: torch.Tensor,
+    start_ix: int,
+    end_ix: int,
+    probs: bool = False,
+    ranks: bool = False,
+    kl: bool = False,
+    verbose: bool = False,
+    **kwargs,
+):
+    """
+    Draws "logit lens" plots for a HookedTransformer model using the component-based view.
+    """
+    layer_nodes = make_layer_names(model, **kwargs)
+    #
+    # print("*"*50)
+    # print(layer_nodes)
+    # print("*"*50)
+
+    make_lens_hooks(
+        model,
+        layer_nodes=layer_nodes,
+        start_ix=start_ix,
+        end_ix=end_ix,
+        verbose=verbose,
+    )
+
+    layer_names_str = [node.name for node in layer_nodes]
+
+    # print("*" * 50)
+    # print(layer_names_str)
+    # print("*" * 50)
+
+    layer_logits, collected_names = collect_logits(
+        model,
+        input_ids,
+        layer_names=layer_names_str,
+    )
+    clear_lens_hooks(model)
+
+    layer_preds, layer_probs = postprocess_logits(layer_logits)
+
+    _plot_logit_lens(
+        layer_logits=layer_logits,
+        layer_preds=layer_preds,
+        layer_probs=layer_probs,
+        tokenizer=tokenizer,
+        input_ids=input_ids,
+        start_ix=start_ix,
+        layer_names=collected_names,
+        probs=probs,
+        ranks=ranks,
+        kl=kl,
+        top_down=kwargs.get("top_down", False),
+    )\n# ===== ./logit_lens/hooks.py =====
+# ===== ./logit_lens/hooks.py =====
+import torch
+import torch.nn as nn
+from transformer_lens import HookedTransformer
+
+from ..util.python_utils import make_print_if_verbose
+from .layer_names import Node, AttentionNode
+
+
+def make_decoder(model: HookedTransformer) -> nn.Module:
+    """
+    Creates a decoder module from the model's final layer norm and unembedding matrix.
+    """
+    return nn.Sequential(model.ln_final, model.unembed)
+
+
+def make_lens_hooks(
+        model: HookedTransformer,
+        layer_nodes: list[Node],
+        verbose: bool = False,
+        start_ix: int = None,
+        end_ix: int = None,
+        **kwargs,
+):
+    """
+    Adds hooks to the model to decode and store logits from component outputs.
+    """
+    vprint = make_print_if_verbose(verbose)
+    clear_lens_hooks(model)
+
+    def _opt_slice(x, start_ix, end_ix):
+        if not isinstance(x, torch.Tensor):
+            return x
+        start = start_ix if start_ix is not None else 0
+        end = end_ix if end_ix is not None else x.shape[1]
+        return x[:, start:end, :]
+
+    model._layer_logits = {}
+    model._lens_decoder = make_decoder(model)
+
+    def _create_hook_fn(node: Node):
+        def _record_logits_hook(activation: torch.Tensor, hook) -> None:
+
+            if isinstance(node, AttentionNode):
+                component_output = activation[:, :, node.head, :]  # -> shape [batch, pos, d_model]
+            else:
+                component_output = activation
+
+            decoder_out = model._lens_decoder(component_output)
+            sliced_logits = _opt_slice(decoder_out, start_ix, end_ix)
+            model._layer_logits[node.name] = sliced_logits.cpu().numpy()
+
+        return _record_logits_hook
+
+    for node in layer_nodes:
+        hook_name = node.out_hook
+        if not hook_name:
+            continue
+
+        model.add_hook(hook_name, _create_hook_fn(node))
+        vprint(f"Added logit lens hook at '{hook_name}' for node '{node.name}'")
+
+
+def clear_lens_hooks(model: HookedTransformer):
+    """Removes all hooks and cleans up logit lens attributes from the model."""
+    model.reset_hooks()
+
+    for attr in ["_layer_logits", "_lens_decoder"]:
+        if hasattr(model, attr):
+            delattr(model, attr)\n# ===== ./logit_lens/layer_names.py =====
+from transformer_lens import HookedTransformer
+from typing import List, Dict, Union, Tuple, Literal, Optional, Set
+
+from graph import Node, Edge, Graph, InputNode, AttentionNode, MLPNode
+
+def make_layer_names(
+    model: HookedTransformer,
+    **kwargs,
+) -> List[Node]:
+    """
+    Generates a list of Node objects representing the model's computational
+    components for logit lens visualization.
+    """
+    cfg = model.cfg
+    detailed_cfg = {'n_layers': cfg.n_layers, 'n_heads': cfg.n_heads}
+
+    input_node = InputNode()
+    residual_stream_components = [input_node]
+
+    for layer in range(detailed_cfg['n_layers']):
+        attn_nodes = [AttentionNode(layer, head) for head in range(detailed_cfg['n_heads'])]
+        mlp_node = MLPNode(layer)
+        # logits_node = LogitNode(layer)
+
+        # residual_stream_components.extend(attn_nodes)
+        residual_stream_components.append(mlp_node)
+        # residual_stream_components.append(logits_node)
+
+    return residual_stream_components\n# ===== ./logit_lens/bias_layers_graph.py =====
+import torch
+from torch import Tensor
+import numpy as np
+import pandas as pd
+
+from typing import List, Union, Optional, Tuple, Literal, Callable
+from functools import partial
+from IPython.display import Image, display
+
+from tqdm import tqdm
+
+import transformer_lens.utils as utils
+from transformer_lens.hook_points import (
+    HookPoint,
+)  # Hooking utilities
+from transformer_lens import HookedTransformer, ActivationCache
+import plotly.io as pio
+
+from transformers import pipeline
+
+from einops import einsum
+
+from .graph import Graph, Edge, Node, InputNode, AttentionNode, MLPNode, LogitNode
+
+from transformers import LlamaForCausalLM, LlamaTokenizerFast
+
+
+def batch_dataset(df, batch_size=1):
+    sentence, corrupted = [df[col].tolist() for col in ['sentence', 'corrupted']]
+    sentence = [sentence[i:i+batch_size] for i in range(0, len(df), batch_size)]
+    corrupted = [corrupted[i:i+batch_size] for i in range(0, len(df), batch_size)]
+    return [(sentence[i], corrupted[i]) for i in range(len(sentence))]
+
+def text_to_sentiment(sentence, sentiment_pipeline):
+    result = sentiment_pipeline(sentence)[0]
+    print(result)
+    if result['label'] == "POSITIVE":
+        print(f"label = POSITIVE | score = {result['score']}")
+        return result['score']
+    if result['label'] == "NEGATIVE":
+        print(f"label = NEGATIVE | score = {result['score']}")
+        return -result['score']
+    raise ValueError("Unknown result label: " + result['label'])
+
+
+import eap
+
+
+from typing import List, Dict, Union, Tuple, Literal, Optional, Set
+from collections import defaultdict
+from pathlib import Path
+import json
+import heapq
+
+import torch
+from transformer_lens import HookedTransformer, HookedTransformerConfig
+import numpy as np
+import pygraphviz as pgv
+
+from eap.visualization import EDGE_TYPE_COLORS, generate_random_color
+
+
+def prob_diff(model,
+              sentiment_pipeline,
+              sentence,
+              logits: torch.Tensor,
+              loss=False,
+              mean=False):
+    Positive_Probs = 0
+    Negative_Probs = 0
+    k=10
+    probs = torch.softmax(logits[:,-1], dim=-1)
+    probs, next_tokens = torch.topk(probs[-1], k)
+    results = []
+    for i, (prob, token_id) in enumerate(zip(probs,next_tokens)):
+        token = model.tokenizer.decode(token_id.item())
+        predicted = sentence[0] + " " + token  # Append the predicted token to the current text
+        Senti_Scores = text_to_sentiment(predicted, sentiment_pipeline)
+        if Senti_Scores >= 0:
+          Positive_Probs += prob.sum()
+        else:
+          Negative_Probs += prob.sum()
+
+    results.append(Positive_Probs - Negative_Probs)
+    results = torch.stack(results)
+    if loss:
+        results = -results
+    if mean:
+        results = results.mean()
+    return results
+
+def prob_diff_new(model,
+                  setiment_pipeline,
+                  sentence,
+                  logits: torch.Tensor,
+                  loss=True,
+                  mean=True):
+    #Positive_Probs = torch.tensor(0, dtype=torch.float32, device='cuda')
+    Positive_Probs = 0
+    Negative_Probs = 0
+    k=10
+    probs = torch.softmax(logits[:,-1], dim=-1)
+    probs, next_tokens = torch.topk(probs[-1], k)
+    results = []
+    for i, (prob, token_id) in enumerate(zip(probs,next_tokens)):
+        token = model.tokenizer.decode(token_id.item())
+        predicted = sentence[0] + " " + token  # Append the predicted token to the current text
+        Senti_Scores = text_to_sentiment(predicted, setiment_pipeline)
+        if Senti_Scores >= 0:
+          Positive_Probs += prob.sum()
+        else:
+          Negative_Probs += (prob-prob).sum()
+
+    results.append(Positive_Probs - Negative_Probs)
+    results = torch.stack(results)
+    if loss:
+        results = -results
+    if mean:
+        results = results.mean()
+    return results
+
+def evaluate_baseline(model: HookedTransformer,
+                      sentiment_pipeline,
+                      dataset,
+                      metrics: List[Callable[[Tensor], Tensor]]):
+    metrics_list = True
+    if not isinstance(metrics, list):
+        metrics = [metrics]
+        metrics_list = False
+
+    results = [[] for _ in metrics]
+    for sentence, corrupted in tqdm(dataset):
+        with torch.inference_mode():
+            logits = model(sentence)
+        for j, metric in enumerate(metrics):
+            r = metric(model=model,
+                        sentence=sentence,
+                       logits=logits,
+                       sentiment_pipeline=sentiment_pipeline).cpu()
+            if len(r.size()) == 0:
+                r = r.unsqueeze(0)
+            results[j].append(r)
+    results = [torch.cat(rs) for rs in results]
+    if not metrics_list:
+        results = results[0]
+    return results
+
+def evaluate_graph(model: HookedTransformer,
+                   sentiment_pipeline,
+                   graph: Graph,
+                   dataset,
+                   metrics: List[Callable[[Tensor], Tensor]],
+                   prune:bool=True):
+    """
+    Evaluate a circuit (i.e. a graph where only some nodes are false, probably created by calling graph.apply_threshold). You probably want to prune beforehand to make sure your circuit is valid.
+    """
+    # Pruning the Graph: If prune is True, it prunes the graph by removing childless and parentless nodes.
+    if prune:
+        graph.prune_dead_nodes(prune_childless=True, prune_parentless=True)
+
+    # Check for Empty Circuit: Sets empty_circuit to True if the 'logits' node is not in the graph.
+    empty_circuit = not graph.nodes['logits'].in_graph
+
+    # Forward Hook Names: Collects the output hooks of parent nodes from all edges in the graph.
+    # Forward Filter: Creates a filter function to check if a given hook name is in fwd_names.
+    fwd_names = {edge.parent.out_hook for edge in graph.edges.values()}
+    fwd_filter = lambda x: x in fwd_names
+
+    # Get Caching Hooks: Retrieves the corrupted and mixed forward caches and hooks from the model using the forward filter.
+    corrupted_fwd_cache, corrupted_fwd_hooks, _ = model.get_caching_hooks(fwd_filter)
+    mixed_fwd_cache, mixed_fwd_hooks, _ = model.get_caching_hooks(fwd_filter)
+
+    # Nodes in Graph: Collects all nodes in the graph that are not of type InputNode and are part of the graph (in_graph is True).
+    nodes_in_graph = [node for node in graph.nodes.values() if node.in_graph if not isinstance(node, InputNode)]
+
+    """For each node in the graph, construct its input (in the case of attention heads, multiple inputs) by corrupting the incoming edges that are not in the circuit.
+       We assume that the corrupted cache is filled with corresponding corrupted activations, and that the mixed cache contains the computed activations from preceding nodes in this forward pass."""
+    # Input Construction Hook: Defines a nested function make_input_construction_hook that creates an input_construction_hook.
+    # Inner Function input_construction_hook: Iterates over the parent edges of a node.
+    # If the qkv attribute of an edge does not match the provided qkv parameter, it skips the edge.
+    # If the edge is not part of the graph (in_graph is False), it modifies the activations by replacing values from the mixed forward cache with those from the corrupted forward cache.
+    # Return: Returns the input_construction_hook function.
+    def make_input_construction_hook(node: Node, qkv=None):
+        def input_construction_hook(activations, hook):
+            for edge in node.parent_edges:
+                if edge.qkv != qkv:
+                    continue
+
+                parent:Node = edge.parent
+                if not edge.in_graph:
+                    activations[edge.index] -= mixed_fwd_cache[parent.out_hook][parent.index]
+                    activations[edge.index] += corrupted_fwd_cache[parent.out_hook][parent.index]
+            return activations
+        return input_construction_hook
+
+    # Create Input Construction Hooks: Iterates over the nodes in the graph to create input construction hooks.
+    # InputNode: Skips if the node is an InputNode.
+    # LogitNode or MLPNode: Adds a hook using make_input_construction_hook without qkv.
+    # AttentionNode: Adds hooks for each of 'q', 'k', and 'v' inputs.
+    # Invalid Node: Raises an error if the node type is not recognized.
+    input_construction_hooks = []
+    for node in nodes_in_graph:
+        if isinstance(node, InputNode):
+            pass
+        elif isinstance(node, LogitNode) or isinstance(node, MLPNode):
+            input_construction_hooks.append((node.in_hook, make_input_construction_hook(node)))
+        elif isinstance(node, AttentionNode):
+            for i, letter in enumerate('qkv'):
+                input_construction_hooks.append((node.qkv_inputs[i], make_input_construction_hook(node, qkv=letter)))
+        else:
+            raise ValueError(f"Invalid node: {node} of type {type(node)}")
+
+    # and here we actually run / evaluate the model
+    metrics_list = True
+    if not isinstance(metrics, list):
+        metrics = [metrics]
+        metrics_list = False
+    results = [[] for _ in metrics]
+
+    for sentence, corrupted in tqdm(dataset):
+        sens = [sentence, corrupted]
+        sens = [str(s) for s in sens]
+        max_length = max(len(model.tokenizer.tokenize(s, add_special_tokens=False)) for s in sens)
+        padded_sentences = [model.tokenizer.encode(s, padding='max_length', max_length=max_length, return_tensors='pt', add_special_tokens=False) for s in sens]
+        s1 = padded_sentences[0]
+        s2 = padded_sentences[1]
+        clean = model.tokenizer.decode(s1[0])
+        corrupted_dash = model.tokenizer.decode(s2[0])
+
+        with torch.inference_mode():
+            with model.hooks(corrupted_fwd_hooks):
+                corrupted_logits = model(corrupted_dash)
+
+            with model.hooks(mixed_fwd_hooks + input_construction_hooks):
+                if empty_circuit:
+                    # if the circuit is totally empty, so is nodes_in_graph
+                    # so we just corrupt everything manually like this
+                    logits = model(corrupted_dash)
+                else:
+                    logits = model(clean)
+        for i, metric in enumerate(metrics):
+            r = metric(model, sentiment_pipeline, sentence, logits).cpu()
+            if len(r.size()) == 0:
+                r = r.unsqueeze(0)
+            results[i].append(r)
+
+    results = [torch.cat(rs) for rs in results]
+    if not metrics_list:
+        results = results[0]
+    return results
+
+
+baseline_pos_dataset = 0.31796029210090637
+baseline_neg_dataset = 0.0833059623837471
+graph_baseline_pos = 0.11602818220853806
+graph_baseline_neg = 0.004397808574140072
+
+
+device = 'cpu'
+def get_npos_input_lengths(model, inputs):
+    tokenized = model.tokenizer(inputs, padding='longest', return_tensors='pt', add_special_tokens=True)
+    n_pos = 1 + tokenized.attention_mask.size(1)
+    input_lengths = 1 + tokenized.attention_mask.sum(1)
+    return n_pos, input_lengths
+
+def make_hooks_and_matrices(model: HookedTransformer,
+                            graph: Graph,
+                            batch_size:int ,
+                            n_pos:int,
+                            scores):
+    activation_difference = torch.zeros((batch_size, n_pos, graph.n_forward, model.cfg.d_model), device=device, dtype=model.cfg.dtype)
+
+    processed_attn_layers = set()
+    fwd_hooks_clean = []
+    fwd_hooks_corrupted = []
+    bwd_hooks = []
+
+    def activation_hook(index, activations, hook, add:bool=True):
+        acts = activations.detach()
+        if not add:
+            acts = -acts
+        try:
+            activation_difference[:, :, index] += acts
+        except RuntimeError as e:
+            print(hook.name, activation_difference[:, :, index].size(), acts.size())
+            raise e
+
+    def gradient_hook(fwd_index: Union[slice, int], bwd_index: Union[slice, int], gradients:torch.Tensor, hook):
+        grads = gradients.detach()
+        try:
+            if isinstance(fwd_index, slice):
+                fwd_index = fwd_index.start
+            if grads.ndim == 3:
+                grads = grads.unsqueeze(2)
+            s = einsum(activation_difference[:, :, :fwd_index], grads,'batch pos forward hidden, batch pos backward hidden -> forward backward')
+            s = s.squeeze(1)
+            scores[:fwd_index, bwd_index] += s
+        except RuntimeError as e:
+            print(hook.name, activation_difference.size(), grads.size())
+            raise e
+
+    for name, node in graph.nodes.items():
+        if isinstance(node, AttentionNode):
+            if node.layer in processed_attn_layers:
+                continue
+            else:
+                processed_attn_layers.add(node.layer)
+
+        # exclude logits from forward
+        fwd_index =  graph.forward_index(node)
+        if not isinstance(node, LogitNode):
+            fwd_hooks_corrupted.append((node.out_hook, partial(activation_hook, fwd_index)))
+            fwd_hooks_clean.append((node.out_hook, partial(activation_hook, fwd_index, add=False)))
+        if not isinstance(node, InputNode):
+            if isinstance(node, AttentionNode):
+                for i, letter in enumerate('qkv'):
+                    bwd_index = graph.backward_index(node, qkv=letter)
+                    bwd_hooks.append((node.qkv_inputs[i], partial(gradient_hook, fwd_index, bwd_index)))
+            else:
+                bwd_index = graph.backward_index(node)
+                bwd_hooks.append((node.in_hook, partial(gradient_hook, fwd_index, bwd_index)))
+
+    return (fwd_hooks_corrupted, fwd_hooks_clean, bwd_hooks), activation_difference
+
+######                #######
+#####  Edit from here  #######
+#####                 #######
+
+def get_scores(model: HookedTransformer,
+               graph: Graph,
+               sentiment_pipeline,
+               dataset,
+               metric: Callable[[Tensor], Tensor]):
+    scores = torch.zeros((graph.n_forward, graph.n_backward), device=device, dtype=model.cfg.dtype)
+
+    total_items = 0
+    for sentence, corrupted in tqdm(dataset):
+        sens = [sentence, corrupted]
+        sens = [str(s) for s in sens]
+        max_length = max(len(model.tokenizer.tokenize(s)) for s in sens)
+        padded_sentences = [model.tokenizer.encode(s, padding='max_length', max_length=max_length, return_tensors='pt', add_special_tokens=True) for s in sens]
+        s1 = padded_sentences[0]
+        s2 = padded_sentences[1]
+        clean = model.tokenizer.decode(s1[0])
+        corrupted_dash = model.tokenizer.decode(s2[0])
+
+        batch_size = len(clean)
+        total_items += batch_size
+        n_pos, input_lengths = get_npos_input_lengths(model, clean)
+
+        (fwd_hooks_corrupted, fwd_hooks_clean, bwd_hooks), activation_difference = make_hooks_and_matrices(model, graph, batch_size, n_pos, scores)
+
+        with model.hooks(fwd_hooks=fwd_hooks_corrupted):
+            corrupted_logits = model(corrupted_dash)
+
+        with model.hooks(fwd_hooks=fwd_hooks_clean, bwd_hooks=bwd_hooks):
+            logits = model(clean)
+            label = torch.tensor(0, device=device, dtype=model.cfg.dtype)
+            metric_value = metric(model, sentiment_pipeline, sentence, logits)
+            metric_value.backward()
+
+    scores /= total_items
+
+    return scores
+
+def get_scores_ig(model: HookedTransformer,
+                  graph: Graph,
+                  sentiment_pipeline,
+                  dataset,
+                  metric: Callable[[Tensor], Tensor],
+                  steps=30):
+    scores = torch.zeros((graph.n_forward, graph.n_backward), device=device, dtype=model.cfg.dtype)
+
+    total_items = 0
+    for sentence, corrupted in tqdm(dataset):
+        sens = [sentence, corrupted]
+        sens = [str(s) for s in sens]
+        max_length = max(len(model.tokenizer.tokenize(s)) for s in sens)
+        padded_sentences = [model.tokenizer.encode(s, padding='max_length', max_length=max_length, return_tensors='pt', add_special_tokens=True) for s in sens]
+        s1 = padded_sentences[0]
+        s2 = padded_sentences[1]
+        clean = model.tokenizer.decode(s1[0])
+        corrupted_dash = model.tokenizer.decode(s2[0])
+
+        batch_size = len(clean)
+        total_items += batch_size
+        n_pos, input_lengths = get_npos_input_lengths(model, clean)
+
+        (fwd_hooks_corrupted, fwd_hooks_clean, bwd_hooks), activation_difference = make_hooks_and_matrices(model, graph, batch_size, n_pos, scores)
+
+        with torch.inference_mode():
+            with model.hooks(fwd_hooks=fwd_hooks_corrupted):
+                _ = model(corrupted_dash)
+
+            input_activations_corrupted = activation_difference[:, :, graph.forward_index(graph.nodes['input'])].clone()
+
+            with model.hooks(fwd_hooks=fwd_hooks_clean):
+                clean_logits = model(clean)
+
+            input_activations_clean = input_activations_corrupted - activation_difference[:, :, graph.forward_index(graph.nodes['input'])]
+
+        def input_interpolation_hook(k: int):
+            def hook_fn(activations, hook):
+                new_input = input_activations_clean + (k / steps) * (input_activations_corrupted - input_activations_clean)
+                new_input.requires_grad = True
+                return new_input
+            return hook_fn
+
+        total_steps = 0
+        for step in range(1, steps+1):
+            total_steps += 1
+            with model.hooks(fwd_hooks=[(graph.nodes['input'].out_hook, input_interpolation_hook(step))], bwd_hooks=bwd_hooks):
+                logits = model(clean)
+                label = torch.tensor(0, device=device, dtype=model.cfg.dtype)
+                metric_value = metric(model, sentiment_pipeline, sentence,logits)
+                metric_value.backward()
+
+    scores /= total_items
+    scores /= total_steps
+
+    return scores
+
+allowed_aggregations = {'sum', 'mean', 'l2'}
+
+
+
+def attribute(model: HookedTransformer,
+              graph: Graph,
+              sentiment_pipeline,
+              dataset,
+              metric: Callable[[Tensor], Tensor],
+              aggregation='sum',
+              integrated_gradients: Optional[int]=None):
+    if aggregation not in allowed_aggregations:
+        raise ValueError(f'aggregation must be in {allowed_aggregations}, but got {aggregation}')
+
+
+    if integrated_gradients is None:
+        scores = get_scores(model, graph, sentiment_pipeline, dataset, metric)
+    else:
+        assert integrated_gradients > 0, f"integrated_gradients gives positive # steps (m), but got {integrated_gradients}"
+        scores = get_scores_ig(model, graph, sentiment_pipeline, dataset, metric, steps=integrated_gradients)
+
+        if aggregation == 'mean':
+            scores /= model.cfg.d_model
+        elif aggregation == 'l2':
+            scores = torch.linalg.vector_norm(scores, ord=2, dim=-1)
+
+    scores = scores.cpu().numpy()
+
+    for edge in tqdm(graph.edges.values(), total=len(graph.edges)):
+        edge.score = scores[graph.forward_index(edge.parent, attn_slice=False), graph.backward_index(edge.child, qkv=edge.qkv, attn_slice=False)]
+
+\n# ===== ./logit_lens/graph.py =====
+from typing import List, Dict, Union, Tuple, Literal, Optional, Set
+from eap.visualization import EDGE_TYPE_COLORS, generate_random_color
+import torch
+import numpy as np
+
+from typing import List, Union, Optional, Tuple, Literal, Callable
+
+from transformer_lens import HookedTransformer, HookedTransformerConfig
+import heapq
+import json
+
+import pygraphviz as pgv
+
+from eap.visualization import EDGE_TYPE_COLORS
+
+
+class Node:
+    name: str
+    layer: int
+    in_hook: str
+    out_hook: str
+    index: Tuple
+    parents: Set['Node']
+    parent_edges: Set['Edge']
+    children: Set['Node']
+    child_edges: Set['Edge']
+    in_graph: bool
+    qkv_inputs: Optional[List[str]]
+
+    def __init__(self, name: str, layer:int, in_hook: str, out_hook: str, index: Tuple, qkv_inputs: Optional[List[str]]=None):
+        self.name = name
+        self.layer = layer
+        self.in_hook = in_hook
+        self.out_hook = out_hook
+        self.index = index
+        self.in_graph = True
+        self.parents = set()
+        self.children = set()
+        self.parent_edges = set()
+        self.child_edges = set()
+        self.qkv_inputs = qkv_inputs
+
+    def __eq__(self, other):
+        return self.name == other.name
+
+    def __repr__(self):
+        return f'Node({self.name})'
+
+    def __hash__(self):
+        return hash(self.name)
+
+class LogitNode(Node):
+    def __init__(self, n_layers:int):
+        name = 'logits'
+        index = slice(None)
+        super().__init__(name, n_layers - 1, f"blocks.{n_layers - 1}.hook_resid_post", '', index)
+
+class MLPNode(Node):
+    def __init__(self, layer: int):
+        name = f'm{layer}'
+        index = slice(None)
+        super().__init__(name, layer, f"blocks.{layer}.hook_mlp_in", f"blocks.{layer}.hook_resid_post", index)
+
+class AttentionNode(Node):
+    head: int
+    def __init__(self, layer:int, head:int):
+        name = f'a{layer}.h{head}'
+        self.head = head
+        index = (slice(None), slice(None), head)
+        super().__init__(name, layer, f'blocks.{layer}.hook_attn_in', f"blocks.{layer}.attn.hook_result", index, [f'blocks.{layer}.hook_{letter}_input' for letter in 'qkv'])
+
+class InputNode(Node):
+    def __init__(self):
+        name = 'input'
+        index = slice(None)
+        super().__init__(name, 0, '', "blocks.0.hook_resid_pre", index)
+
+class Edge:
+    name: str
+    parent: Node
+    child: Node
+    hook: str
+    index: Tuple
+    score : Optional[float]
+    in_graph: bool
+    def __init__(self, parent: Node, child: Node, qkv:Union[None, Literal['q'], Literal['k'], Literal['v']]=None):
+        self.name = f'{parent.name}->{child.name}' if qkv is None else f'{parent.name}->{child.name}<{qkv}>'
+        self.parent = parent
+        self.child = child
+        self.qkv = qkv
+        self.score = None
+        self.in_graph = True
+        if isinstance(child, AttentionNode):
+            if qkv is None:
+                raise ValueError(f'Edge({self.name}): Edges to attention heads must have a non-none value for qkv.')
+            self.hook = f'blocks.{child.layer}.hook_{qkv}_input'
+            self.index = (slice(None), slice(None), child.head)
+        else:
+            self.index = child.index
+            self.hook = child.in_hook
+    def get_color(self):
+        if self.qkv is not None:
+            return EDGE_TYPE_COLORS[self.qkv]
+        elif self.score < 0:
+            return "#FF00FF"
+        else:
+            return "#000000"
+
+    def __eq__(self, other):
+        return self.name == other.name
+
+    def __repr__(self):
+        return f'Edge({self.name})'
+
+    def __hash__(self):
+        return hash(self.name)
+
+
+class Graph:
+    nodes: Dict[str, Node]
+    edges: Dict[str, Edge]
+    n_forward: int
+    n_backward: int
+    cfg: HookedTransformerConfig
+
+    def __init__(self):
+        self.nodes = {}
+        self.edges = {}
+        self.n_forward = 0
+        self.n_backward = 0
+
+    def add_edge(self, parent:Node, child:Node, qkv:Union[None, Literal['q'], Literal['k'], Literal['v']]=None):
+        edge = Edge(parent, child, qkv)
+        self.edges[edge.name] = edge
+        parent.children.add(child)
+        parent.child_edges.add(edge)
+        child.parents.add(parent)
+        child.parent_edges.add(edge)
+
+    def forward_index(self, node:Node, attn_slice=True):
+        if isinstance(node, InputNode):
+            return 0
+        elif isinstance(node, LogitNode):
+            return self.n_forward
+            # raise ValueError(f"No forward for logits node")
+        elif isinstance(node, MLPNode):
+            return 1 + node.layer * (self.cfg['n_heads'] + 1) + self.cfg['n_heads']
+        elif isinstance(node, AttentionNode):
+            i =  1 + node.layer * (self.cfg['n_heads'] + 1)
+            return slice(i, i + self.cfg['n_heads']) if attn_slice else i + node.head
+        else:
+            raise ValueError(f"Invalid node: {node} of type {type(node)}")
+
+
+    def backward_index(self, node:Node, qkv=None, attn_slice=True):
+        if isinstance(node, InputNode):
+            raise ValueError(f"No backward for input node")
+        elif isinstance(node, LogitNode):
+            return -1
+        elif isinstance(node, MLPNode):
+            return (node.layer) * (3 * self.cfg['n_heads'] + 1) + 3 * self.cfg['n_heads']
+        elif isinstance(node, AttentionNode):
+            assert qkv in 'qkv', f'Must give qkv for AttentionNode, but got {qkv}'
+            i = node.layer * (3 * self.cfg['n_heads'] + 1) + ('qkv'.index(qkv) * self.cfg['n_heads'])
+            return slice(i, i + self.cfg['n_heads']) if attn_slice else i + node.head
+        else:
+            raise ValueError(f"Invalid node: {node} of type {type(node)}")
+
+    def scores(self, absolute=False, nonzero=False, in_graph=False, sort=True):
+        s = [edge.score for edge in self.edges.values() if edge.score != 0 and (edge.in_graph or not in_graph)] if nonzero else [edge.score for edge in self.edges.values()]
+        s = torch.tensor(s)
+        if absolute:
+            s = s.abs()
+        return torch.sort(s).values if sort else s
+
+    def count_included_edges(self):
+        return sum(edge.in_graph for edge in self.edges.values())
+
+    def count_included_nodes(self):
+        return sum(node.in_graph for node in self.nodes.values())
+
+    def apply_threshold(self, threshold: float, absolute: bool):
+        threshold = float(threshold)
+        for node in self.nodes.values():
+            node.in_graph = True
+
+        for edge in self.edges.values():
+            edge.in_graph = abs(edge.score) <= threshold if absolute else edge.score <= threshold
+
+    def apply_greedy(self, n_edges, reset=True, absolute: bool=False):
+        if reset:
+            for node in self.nodes.values():
+                node.in_graph = False
+            for edge in self.edges.values():
+                edge.in_graph = False
+            self.nodes['logits'].in_graph = True
+
+        def abs_id(s: float):
+            return abs(s) if absolute else s
+
+        candidate_edges = sorted([edge for edge in self.edges.values() if edge.child.in_graph], key = lambda edge: abs_id(edge.score), reverse=True)
+
+        edges = heapq.merge(candidate_edges, key = lambda edge: abs_id(edge.score), reverse=True)
+        while n_edges > 0:
+            n_edges -= 1
+            top_edge = next(edges)
+            top_edge.in_graph = True
+            parent = top_edge.parent
+            if not parent.in_graph:
+                parent.in_graph = True
+                parent_parent_edges = sorted([parent_edge for parent_edge in parent.parent_edges], key = lambda edge: abs_id(edge.score), reverse=True)
+                edges = heapq.merge(edges, parent_parent_edges, key = lambda edge: abs_id(edge.score), reverse=True)
+
+    def prune_dead_nodes(self, prune_childless=True, prune_parentless=True):
+        self.nodes['logits'].in_graph = any(parent_edge.in_graph for parent_edge in self.nodes['logits'].parent_edges)
+
+        for node in reversed(self.nodes.values()):
+            if isinstance(node, LogitNode):
+                continue
+
+            if any(child_edge.in_graph for child_edge in node.child_edges) :
+                node.in_graph = True
+            else:
+                if prune_childless:
+                    node.in_graph = False
+                    for parent_edge in node.parent_edges:
+                        parent_edge.in_graph = False
+                else:
+                    if any(child_edge.in_graph for child_edge in node.child_edges):
+                        node.in_graph = True
+                    else:
+                        node.in_graph = False
+
+        if prune_parentless:
+            for node in self.nodes.values():
+                if not isinstance(node, InputNode) and node.in_graph and not any(parent_edge.in_graph for parent_edge in node.parent_edges):
+                    node.in_graph = False
+                    for child_edge in node.child_edges:
+                        child_edge.in_graph = False
+
+
+    @classmethod
+    def from_model(cls, model_or_config: Union[HookedTransformer,HookedTransformerConfig, Dict]):
+        graph = Graph()
+        if isinstance(model_or_config, HookedTransformer):
+            cfg = model_or_config.cfg
+            graph.cfg = {'n_layers': cfg.n_layers, 'n_heads': cfg.n_heads, 'parallel_attn_mlp':cfg.parallel_attn_mlp}
+        elif isinstance(model_or_config, HookedTransformerConfig):
+            cfg = model_or_config
+            graph.cfg = {'n_layers': cfg.n_layers, 'n_heads': cfg.n_heads, 'parallel_attn_mlp':cfg.parallel_attn_mlp}
+        else:
+            graph.cfg = model_or_config
+
+        input_node = InputNode()
+        graph.nodes[input_node.name] = input_node
+        residual_stream = [input_node]
+
+        for layer in range(graph.cfg['n_layers']):
+            attn_nodes = [AttentionNode(layer, head) for head in range(graph.cfg['n_heads'])]
+            mlp_node = MLPNode(layer)
+
+            for attn_node in attn_nodes:
+                graph.nodes[attn_node.name] = attn_node
+            graph.nodes[mlp_node.name] = mlp_node
+
+            if graph.cfg['parallel_attn_mlp']:
+                for node in residual_stream:
+                    for attn_node in attn_nodes:
+                        for letter in 'qkv':
+                            graph.add_edge(node, attn_node, qkv=letter)
+                    graph.add_edge(node, mlp_node)
+
+                residual_stream += attn_nodes
+                residual_stream.append(mlp_node)
+
+            else:
+                for node in residual_stream:
+                    for attn_node in attn_nodes:
+                        for letter in 'qkv':
+                            graph.add_edge(node, attn_node, qkv=letter)
+                residual_stream += attn_nodes
+
+                for node in residual_stream:
+                    graph.add_edge(node, mlp_node)
+                residual_stream.append(mlp_node)
+
+        logit_node = LogitNode(graph.cfg['n_layers'])
+        for node in residual_stream:
+            graph.add_edge(node, logit_node)
+
+        graph.nodes[logit_node.name] = logit_node
+
+        graph.n_forward = 1 + graph.cfg['n_layers'] * (graph.cfg['n_heads'] + 1)
+        graph.n_backward = graph.cfg['n_layers'] * (3 * graph.cfg['n_heads'] + 1) + 1
+
+        return graph
+
+
+    def to_json(self, filename):
+        # non serializable info
+        d = {'cfg':self.cfg, 'nodes': {str(name): bool(node.in_graph) for name, node in self.nodes.items()}, 'edges':{str(name): {'score': float(edge.score), 'in_graph': bool(edge.in_graph)} for name, edge in self.edges.items()}}
+        with open(filename, 'w') as f:
+            json.dump(d, f)
+
+    @classmethod
+    def from_json(cls, filename):
+        with open(filename, 'r') as f:
+            d = json.load(f)
+        g = Graph.from_model(d['cfg'])
+        for name, in_graph in d['nodes'].items():
+            g.nodes[name].in_graph = in_graph
+
+        for name, info in d['edges'].items():
+            g.edges[name].score = info['score']
+            g.edges[name].in_graph = info['in_graph']
+
+        return g
+
+    def __eq__(self, other):
+        keys_equal = (set(self.nodes.keys()) == set(other.nodes.keys())) and (set(self.edges.keys()) == set(other.edges.keys()))
+        if not keys_equal:
+            return False
+
+        for name, node in self.nodes.items():
+            if node.in_graph != other.nodes[name].in_graph:
+                return False
+
+        for name, edge in self.edges.items():
+            if (edge.in_graph != other.edges[name].in_graph) or not np.allclose(edge.score, other.edges[name].score):
+                return False
+        return True
+
+    def to_graphviz(
+        self,
+        colorscheme: str = "Pastel2",
+        minimum_penwidth: float = 0.3,
+        layout: str="dot",
+        seed: Optional[int] = None
+    ) -> pgv.AGraph:
+        """
+        Colorscheme: a cmap colorscheme
+        """
+        g = pgv.AGraph(directed=True, bgcolor="white", overlap="false", splines="true", layout=layout)
+
+        if seed is not None:
+            np.random.seed(seed)
+
+        #colors = {node.name: generate_random_color(colorscheme) for node in self.nodes.values()}
+
+        for node in self.nodes.values():
+            if node.in_graph:
+                if node.name in {'input'}:
+                  clr='yellowgreen'
+                elif node.name in {'logits'}:
+                  clr='gold'
+                elif node.name in {'m0', 'm1', 'm2', 'm3', 'm4', 'm5', 'm6', 'm7', 'm8', 'm9', 'm10', 'm11'}:
+                  clr = 'plum'
+                else:
+                  clr='sandybrown'
+                g.add_node(node.name,
+                        fillcolor=clr,
+                        color="black",
+                        style="filled, rounded",
+                        shape="box",
+                        fontname="Helvetica",
+                        )
+
+        for edge in self.edges.values():
+            if edge.in_graph:
+                score = 0 if edge.score is None else edge.score
+                g.add_edge(edge.parent.name,
+                        edge.child.name,
+                        penwidth=str(max(minimum_penwidth, score) * 2),
+                        color='black',
+                        )
+        return g\n# ===== ./low_memory/load_context.py =====
+import torch.nn
+import transformers
+from torch.nn.modules.lazy import LazyModuleMixin
+from torch.nn.parameter import UninitializedParameter
+
+_TORCH_NN_ORIGINAL_LINEAR = torch.nn.Linear
+
+_TFM_PRETRAINED_MODEL_INIT_WEIGHTS_ORIGINAL = (
+    transformers.modeling_utils.PreTrainedModel.init_weights
+)
+_TFM_CONV1D_ORIGINAL = transformers.modeling_utils.Conv1D
+
+
+def init_weights_without_init(self):
+    pass
+
+
+class LazyLinearAPICompatible(torch.nn.LazyLinear):
+    def __init__(self, in_features: int, out_features: int, bias: bool = True) -> None:
+        super().__init__(out_features=out_features, bias=bias)
+
+
+class LazyTransformersConv1D(LazyModuleMixin, _TFM_CONV1D_ORIGINAL):
+    cls_to_become = _TFM_CONV1D_ORIGINAL
+    weight: UninitializedParameter
+
+    def __init__(self, nf, nx):
+        super().__init__(nf=nf, nx=0)
+        self.nx = 0
+        self.weight = UninitializedParameter()
+
+    def reset_parameters(self) -> None:
+        if not self.has_uninitialized_params() and self.nx != 0:
+            super().reset_parameters()
+
+    def initialize_parameters(self, input) -> None:
+        if self.has_uninitialized_params():
+            with torch.no_grad():
+                self.nx = input.shape[-1]
+                self.weight.materialize((self.nf, self.nx))
+                self.reset_parameters()
+
+
+class LowMemoryLoadContext:
+    def __enter__(self):
+        torch.nn.Linear = LazyLinearAPICompatible
+        transformers.modeling_utils.Conv1D = LazyTransformersConv1D
+        transformers.PreTrainedModel.init_weights = init_weights_without_init
+
+    def __exit__(self, exc_type, exc_value, exc_traceback):
+        torch.nn.Linear = _TORCH_NN_ORIGINAL_LINEAR
+        transformers.modeling_utils.Conv1D = _TFM_CONV1D_ORIGINAL
+        transformers.PreTrainedModel.init_weights = (
+            _TFM_PRETRAINED_MODEL_INIT_WEIGHTS_ORIGINAL
+        )
+        return exc_type is None
+\n# ===== ./low_memory/__init__.py =====
+from .load_context import LazyLinearAPICompatible, LazyTransformersConv1D, LowMemoryLoadContext
+from .load import low_memory_load
+from .enable import enable_low_memory_load, disable_low_memory_load
+
+__all__ = [
+    'LazyLinearAPICompatible',
+    'LazyTransformersConv1D',
+    'LowMemoryLoadContext',
+    'low_memory_load',
+    'enable_low_memory_load',
+    'disable_low_memory_load'
+]
+\n# ===== ./low_memory/load.py =====
+import torch
+import transformers
+
+from ..util.python_utils import make_print_if_verbose
+from ..util.module_utils import get_child_module_by_names
+from ..util.tfm_utils import normalize_inconsistent_state_dict_keys
+from .load_context import LowMemoryLoadContext
+
+
+DEFAULT_GENERIC_INPUT = torch.as_tensor([[0]])
+
+
+def modify_weights_after_load(model):
+    """the part of PreTrainedModel.init_weights that isn't initializing weights"""
+    # Prune heads if needed
+    if model.config.pruned_heads:
+        model.prune_heads(model.config.pruned_heads)
+
+    # Tie weights if needed
+    model.tie_weights()
+
+
+def low_memory_load(
+    config_path,
+    model_path,
+    config_cls=None,
+    model_cls=None,
+    high_memory_device="cuda:0",
+    generic_input=DEFAULT_GENERIC_INPUT,
+    verbose=True,
+):
+    vprint = make_print_if_verbose(verbose)
+
+    if isinstance(high_memory_device, str):
+        high_memory_device = torch.device(high_memory_device)
+
+    if config_cls is None:
+        config_cls = transformers.AutoConfig
+
+    vprint("start")
+
+    with LowMemoryLoadContext():
+        config = config_cls.from_pretrained(config_path)
+
+        vprint("made config obj")
+
+        state_dict = torch.load(
+            model_path,
+            map_location=high_memory_device,
+        )
+
+        state_dict = normalize_inconsistent_state_dict_keys(state_dict)
+
+        vprint("loaded state dict")
+
+        # uses lazy init, no memory
+        if model_cls is None:
+            model = transformers.AutoModelForCausalLM.from_config(config)
+        else:
+            model = model_cls(config=config)
+
+        vprint("made model obj")
+
+        # START gpu --> cpu --> gpu handoff, one leaf module at a time
+        handled = set()
+
+        for name in dict(model.named_parameters()).keys():
+            prefix = name.rpartition(".")[0]
+            mod = get_child_module_by_names(model, prefix.split("."))
+
+            if prefix in handled:
+                continue
+
+            vprint((name, prefix, mod))
+
+            mk, uk, er = [], [], []
+            mod._load_from_state_dict(
+                state_dict,
+                prefix=prefix + ".",
+                local_metadata={},
+                strict=True,
+                missing_keys=mk,
+                unexpected_keys=uk,
+                error_msgs=er,
+            )
+            vprint((mk, uk, er))
+            mod.to(high_memory_device)
+            sdks = [k for k in state_dict if k.startswith(prefix)]
+            for k in sdks:
+                del state_dict[k]
+            handled.add(prefix)
+
+        # END gpu --> cpu --> gpu handoff, one leaf module at a time
+
+        vprint("loaded params into memory")
+
+        # does the buffers
+        model = model.to(high_memory_device)
+
+        vprint("loaded all into memory")
+
+        # does stuff like weight tying, now that the weights actually exist
+        modify_weights_after_load(model)
+
+        model.eval()
+
+        # ensures we materialize the lazy params (and delete the hooks for doing so), before doing anything else
+        #
+        # if you add pre-hooks before doing this step, you get OrderedDict mutation exceptions
+        with torch.no_grad():
+            out = model(generic_input.to(high_memory_device))
+            out = None
+
+    return model
+\n# ===== ./low_memory/enable.py =====
+import transformers
+
+from .load import low_memory_load
+from ..util.tfm_utils import huggingface_model_local_paths
+
+_TFM_PRETRAINED_MODEL_FROM_PRETRAINED_ORIGINAL = transformers.modeling_utils.PreTrainedModel.from_pretrained
+
+
+def low_memory_from_pretrained(pretrained_model_name_or_path, *args, **kwargs):
+    config_path, model_path = huggingface_model_local_paths(pretrained_model_name_or_path)
+
+    model = low_memory_load(config_path=config_path, model_path=model_path, verbose=False)
+
+    return model
+
+
+def enable_low_memory_load():
+    transformers.modeling_utils.PreTrainedModel.from_pretrained = low_memory_from_pretrained
+
+
+def disable_low_memory_load():
+    transformers.modeling_utils.PreTrainedModel.from_pretrained = _TFM_PRETRAINED_MODEL_FROM_PRETRAINED_ORIGINAL

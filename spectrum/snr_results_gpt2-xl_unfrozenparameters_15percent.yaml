@@ -1,0 +1,55 @@
+unfrozen_parameters:
+- ^lm_head.weight$
+- ^model.embed_tokens.weight$
+# attn.c_attn layers
+- transformer.h.44.attn.c_attn
+- transformer.h.43.attn.c_attn
+- transformer.h.41.attn.c_attn
+- transformer.h.42.attn.c_attn
+- transformer.h.37.attn.c_attn
+- transformer.h.39.attn.c_attn
+- transformer.h.36.attn.c_attn
+# attn.c_proj layers
+- transformer.h.0.attn.c_proj
+- transformer.h.8.attn.c_proj
+- transformer.h.5.attn.c_proj
+- transformer.h.12.attn.c_proj
+- transformer.h.4.attn.c_proj
+- transformer.h.21.attn.c_proj
+- transformer.h.9.attn.c_proj
+# lm_head layers
+# ln_1 layers
+- transformer.h.0.ln_1
+- transformer.h.1.ln_1
+- transformer.h.2.ln_1
+- transformer.h.3.ln_1
+- transformer.h.4.ln_1
+- transformer.h.5.ln_1
+- transformer.h.6.ln_1
+# ln_2 layers
+- transformer.h.0.ln_2
+- transformer.h.1.ln_2
+- transformer.h.2.ln_2
+- transformer.h.3.ln_2
+- transformer.h.4.ln_2
+- transformer.h.5.ln_2
+- transformer.h.6.ln_2
+# mlp.c_fc layers
+- transformer.h.43.mlp.c_fc
+- transformer.h.42.mlp.c_fc
+- transformer.h.44.mlp.c_fc
+- transformer.h.45.mlp.c_fc
+- transformer.h.41.mlp.c_fc
+- transformer.h.40.mlp.c_fc
+- transformer.h.46.mlp.c_fc
+# mlp.c_proj layers
+- transformer.h.25.mlp.c_proj
+- transformer.h.23.mlp.c_proj
+- transformer.h.24.mlp.c_proj
+- transformer.h.26.mlp.c_proj
+- transformer.h.22.mlp.c_proj
+- transformer.h.21.mlp.c_proj
+- transformer.h.27.mlp.c_proj
+# transformer.ln_f layers
+# transformer.wpe layers
+# transformer.wte layers
