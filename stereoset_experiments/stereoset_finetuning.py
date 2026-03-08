@@ -14,10 +14,10 @@ from dotenv import load_dotenv
 
 import s3_utils
 
-try:
-    from transformer_lens import HookedTransformer
-except ImportError:
-    HookedTransformer = Any
+# try:
+from transformer_lens import HookedTransformer
+# except ImportError:
+#     HookedTransformer = Any
 
 load_dotenv()
 
@@ -1031,6 +1031,8 @@ def run_all_experiments(
         pcts = [100] if exp_type == 'full' else percentiles
 
         for percentile in pcts:
+            if exp_type == 'mlp_from_attn' and percentile == 0.5:
+                continue
             print(f"\n{'='*60}")
             print(f"Experiment: {exp_type} | Percentile: {percentile}% | Loss: {config.loss_type}")
             print(f"{'='*60}")
