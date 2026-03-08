@@ -6,6 +6,7 @@ from huggingface_hub import login
 import os
 import random
 
+import s3_utils
 
 login(token=os.environ["HF_TOKEN"])
 
@@ -20,12 +21,10 @@ model.eval()
 # print(f"Loaded {len(rephrased_stereoset)} examples.")
 
 try:
-    rephrased_stereoset = json.load(open('data/stereoset/gender_new_test_stereoset.json'))
-    file_path = "data/stereoset/test.json"
-    with open(file_path, 'r', encoding='utf-8') as f:
-        raw_data = json.load(f)
-except FileNotFoundError as e:
-    print(f"Error loading data: {e}")
+    rephrased_stereoset = s3_utils.read_json('data/stereoset/gender_new_test_stereoset.json')
+    raw_data = s3_utils.read_json('data/stereoset/test.json')
+except Exception as e:
+    print(f"Error loading data from S3: {e}")
     rephrased_stereoset = []
     raw_data = {}
 
@@ -58,8 +57,8 @@ def get_logit_attribution(model, cache, target_token_id, layer):
 
 
 def accumulative_layer_impact(filename):
-    print("Loading CSV...")
-    df = pd.read_csv(filename)
+    print("Loading CSV from S3...")
+    df = s3_utils.read_csv(filename)
 
     df = df.sort_values(by=['ID', 'Candidate', 'Type', 'Layer', 'Token_Position'])
 
@@ -117,19 +116,14 @@ def layer_tracing(dataset,
                   output_filename):
 
     output_path = f"outputs/gpt2-xl/dev_tests/{output_filename}"
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-    if os.path.exists(output_path):
-        print(f"Resuming from {output_path}...")
-        try:
-            df_existing = pd.read_csv(output_path)
-            all_data = df_existing.to_dict('records')
-            completed_ids = set(df_existing['ID'].unique())
-        except Exception as e:
-            print(f"Error reading existing CSV: {e}. Starting fresh.")
-            all_data = []
-            completed_ids = set()
-    else:
+    try:
+        print(f"Attempting to resume from S3 ({output_path})...")
+        df_existing = s3_utils.read_csv(output_path)
+        all_data = df_existing.to_dict('records')
+        completed_ids = set(df_existing['ID'].unique())
+    except Exception:
+        print("No existing file found on S3. Starting fresh.")
         all_data = []
         completed_ids = set()
 
@@ -147,8 +141,8 @@ def layer_tracing(dataset,
         print(f"Processing item {idx} (ID: {current_id})...")
 
         if len(all_data) > 0 and len(all_data) % 100 == 0:
-            print("Saving intermediate results...")
-            pd.DataFrame(all_data).to_csv(output_path, index=False)
+            print("Saving intermediate results to S3...")
+            s3_utils.write_csv(pd.DataFrame(all_data), output_path)
 
         original_prompt = test_dict[current_id].split('BLANK')[0].strip()
         candidates = sub_dict['targets']
@@ -199,7 +193,7 @@ def layer_tracing(dataset,
                 current_prompt += model.to_string(token_id)
 
     df = pd.DataFrame(all_data)
-    df.to_csv(output_path, index=False)
+    s3_utils.write_csv(df, output_path)
     return all_data
 
 SPLITTING = False
@@ -227,48 +221,36 @@ if __name__ == "__main__":
             train_set = gender_data[:split_idx]
             test_set = gender_data[split_idx:]
 
-            split_dir = "data/stereoset/splits"
-            os.makedirs(split_dir, exist_ok=True)
+            train_path = "data/stereoset/splits/gender_train.json"
+            test_path = "data/stereoset/splits/gender_test.json"
 
-            train_path = f"{split_dir}/gender_train.json"
-            test_path = f"{split_dir}/gender_test.json"
+            s3_utils.write_json(train_set, train_path)
+            s3_utils.write_json(test_set, test_path)
 
-            with open(train_path, "w") as f:
-                json.dump(train_set, f, indent=4)
-
-            with open(test_path, "w") as f:
-                json.dump(test_set, f, indent=4)
-
-            print(f"Successfully created splits in '{split_dir}':")
+            print(f"Successfully created splits on S3:")
             print(f" - Train: {len(train_set)} examples ({train_path})")
             print(f" - Test:  {len(test_set)} examples ({test_path})")
 
         exit(0)
 
     if TRACING:
-        train_file_path = "data/stereoset/splits/gender_train.json"
         test_file_path = "data/stereoset/splits/gender_test.json"
+        print(f"Loading testing data from S3 ({test_file_path})...")
+        test_data = s3_utils.read_json(test_file_path)
+        print(f"Loaded {len(test_data)} testing examples.")
 
-        if not os.path.exists(test_file_path):
-            print(f"Train file not found at {test_file_path}.")
-            print("Please set SPLITTING = True to generate it first.")
-        else:
-            print(f"Loading training data from {test_file_path}...")
-            test_data = json.load(open(test_file_path))
-            print(f"Loaded {len(test_data)} testing examples.")
-
-            print("Starting Tracing on Testing Data...")
-            all_data = layer_tracing(test_data, "out_DLA_gender_test.csv")
-            print("Tracing Complete.")
+        print("Starting Tracing on Testing Data...")
+        all_data = layer_tracing(test_data, "out_DLA_gender_test.csv")
+        print("Tracing Complete.")
 
     if ACC_ANALYSIS:
         print("Starting Accumulation Analysis...")
         filename = "outputs/gpt2-xl/dev_tests/out_DLA_gender_test.csv"
         output_filename = "outputs/gpt2-xl/dev_tests/accumulated_impact_gender_test.csv"
 
-        if os.path.exists(filename):
+        try:
             result_df = accumulative_layer_impact(filename)
-            result_df.to_csv(output_filename, index=False)
-            print(f"Done! Saved accumulated results to {output_filename}")
-        else:
-            print(f"File {filename} not found. Run TRACING first.")
+            s3_utils.write_csv(result_df, output_filename)
+            print(f"Done! Saved accumulated results to S3 ({output_filename})")
+        except Exception as e:
+            print(f"File {filename} not found on S3: {e}. Run TRACING first.")

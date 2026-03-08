@@ -7,6 +7,8 @@ import boto3
 import os
 from dotenv import load_dotenv
 
+import s3_utils
+
 load_dotenv()
 
 login(token=os.environ["HF_TOKEN"])
@@ -42,8 +44,8 @@ def get_logit_attribution(model, cache, target_token_id, layer):
     return head_contributions, mlp_contribution
 
 def accumulative_layer_impact(filename):
-    print("Loading CSV...")
-    df = pd.read_csv(filename)
+    print("Loading CSV from S3...")
+    df = s3_utils.read_csv(filename)
 
     df = df.sort_values(by=['ID', 'Candidate', 'Type', 'Layer', 'Token_Position'])
 
@@ -107,7 +109,7 @@ def layer_tracing(model,
                   dataset):
     df_ids = []
     try:
-        df = pd.read_csv(f"outputs/gpt2-xl/fine_tuned/dpo/out_DLA_gender_test_fine_tuned_{CONDITION}_{percentile}.csv")
+        df = s3_utils.read_csv(f"outputs/gpt2-xl/fine_tuned/dpo/out_DLA_gender_test_fine_tuned_{CONDITION}_{percentile}.csv")
         df_ids = df['ID'].tolist()
     except:
         pass
@@ -121,9 +123,9 @@ def layer_tracing(model,
 
         print(f"Processing item {idx}...")
         if len(all_data) % 10 == 0 and id != 0:
-            print("Saving intermediate results...")
+            print("Saving intermediate results to S3...")
             df = pd.DataFrame(all_data)
-            df.to_csv(f"outputs/gpt2-xl/fine_tuned/dpo/out_DLA_gender_test_fine_tuned_{CONDITION}_{percentile}.csv", index=False)
+            s3_utils.write_csv(df, f"outputs/gpt2-xl/fine_tuned/dpo/out_DLA_gender_test_fine_tuned_{CONDITION}_{percentile}.csv")
 
         ID = sub_dict['id']
 
@@ -181,7 +183,7 @@ def layer_tracing(model,
 
                 current_prompt += model.to_string(token_id)
     df = pd.DataFrame(all_data)
-    df.to_csv(f"outputs/gpt2-xl/fine_tuned/dpo/out_DLA_gender_test_fine_tuned_{CONDITION}_{percentile}.csv", index=False)
+    s3_utils.write_csv(df, f"outputs/gpt2-xl/fine_tuned/dpo/out_DLA_gender_test_fine_tuned_{CONDITION}_{percentile}.csv")
 
     return all_data
 
@@ -213,30 +215,25 @@ def run_experiments_finetuned(percentile_list,
 
         if TRACING:
             test_file_path = "data/stereoset/splits/gender_test.json"
+            print(f"Loading testing data from S3 ({test_file_path})...")
+            test_data = s3_utils.read_json(test_file_path)
+            print(f"Loaded {len(test_data)} testing examples.")
 
-            if not os.path.exists(test_file_path):
-                print(f"Test file not found at {test_file_path}.")
-                print("Please set SPLITTING = True to generate it first.")
-            else:
-                print(f"Loading testing data from {test_file_path}...")
-                test_data = json.load(open(test_file_path))
-                print(f"Loaded {len(test_data)} testing examples.")
-
-                print("Starting Tracing on Testing Data...")
-                layer_tracing(test_model, percentile, test_data)
-                print("Tracing Complete.")
+            print("Starting Tracing on Testing Data...")
+            layer_tracing(test_model, percentile, test_data)
+            print("Tracing Complete.")
 
         if ACC_ANALYSIS:
             print("Starting Accumulation Analysis...")
             output_filename = f"outputs/gpt2-xl/fine_tuned/dpo/accumulated_impact_gender_test_fine_tuned_{CONDITION}_{percentile}.csv"
             filename = f"outputs/gpt2-xl/fine_tuned/dpo/out_DLA_gender_test_fine_tuned_{CONDITION}_{percentile}.csv"
 
-            if os.path.exists(filename):
+            try:
                 result_df = accumulative_layer_impact(filename)
-                result_df.to_csv(output_filename, index=False)
-                print(f"Done! Saved accumulated results to {output_filename}")
-            else:
-                print(f"File {filename} not found. Run TRACING first.")
+                s3_utils.write_csv(result_df, output_filename)
+                print(f"Done! Saved accumulated results to S3 ({output_filename})")
+            except Exception as e:
+                print(f"File {filename} not found on S3: {e}. Run TRACING first.")
 
         print(f"Done analysis for percentile {percentile}! Saved accumulated results to {output_filename}.")
 

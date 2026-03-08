@@ -12,6 +12,8 @@ from torch.utils.data import Dataset, DataLoader, random_split
 from torch import nn
 from dotenv import load_dotenv
 
+import s3_utils
+
 try:
     from transformer_lens import HookedTransformer
 except ImportError:
@@ -52,7 +54,6 @@ class ExperimentConfig:
 
     def __post_init__(self):
         os.makedirs(self.checkpoint_dir, exist_ok=True)
-        os.makedirs(self.results_dir, exist_ok=True)
 
 def save_checkpoint(model, s3_client=None, s3_bucket=None, s3_key=None):
     """Saves locally and optionally uploads to S3."""
@@ -225,15 +226,11 @@ from typing import Optional, List
 
 
 def _load_jsonl(json_path: str) -> list:
-    """Loads a JSON or JSONL file robustly."""
-    if not os.path.exists(json_path):
-        raise FileNotFoundError(f"Dataset not found at {json_path}")
-    with open(json_path, 'r', encoding='utf-8') as f:
-        try:
-            return json.load(f)
-        except json.JSONDecodeError:
-            f.seek(0)
-            return [json.loads(line) for line in f if line.strip()]
+    """Loads a JSON or JSONL file from S3."""
+    try:
+        return s3_utils.read_jsonl(json_path)
+    except Exception:
+        return s3_utils.read_json(json_path)
 
 
 def _setup_tokenizer(tokenizer):
@@ -700,11 +697,9 @@ def run_training_dpo(
         "epochs": epoch_logs,
     }
 
-    log_path = os.path.join(config.results_dir, f"{run_id}.json")
-    os.makedirs(config.results_dir, exist_ok=True)
-    with open(log_path, "w") as f:
-        json.dump(result_dict, f, indent=4)
-    print(f"Saved training log to {log_path}")
+    log_path = f"{config.results_dir}/{run_id}.json"
+    s3_utils.write_json(result_dict, log_path)
+    print(f"Saved training log to s3 ({log_path})")
 
     return result_dict
 
@@ -857,11 +852,9 @@ def run_training_sft_improved(
         "epochs": epoch_logs,
     }
 
-    log_path = os.path.join(config.results_dir, f"{run_id}.json")
-    os.makedirs(config.results_dir, exist_ok=True)
-    with open(log_path, "w") as f:
-        json.dump(result_dict, f, indent=4)
-    print(f"Saved training log to {log_path}")
+    log_path = f"{config.results_dir}/{run_id}.json"
+    s3_utils.write_json(result_dict, log_path)
+    print(f"Saved training log to s3 ({log_path})")
 
     return result_dict
 
@@ -1201,11 +1194,10 @@ def run_all_experiments(
             for param in model.parameters():
                 param.requires_grad = True
 
-    summary_path = os.path.join(config.results_dir, "all_experiment_results.json")
+    summary_path = f"{config.results_dir}/all_experiment_results.json"
     serializable = {f"{k[0]}_{k[1]}": v for k, v in all_results.items()}
-    with open(summary_path, "w") as f:
-        json.dump(serializable, f, indent=4)
-    print(f"\nSaved summary of all experiments to {summary_path}")
+    s3_utils.write_json(serializable, summary_path)
+    print(f"\nSaved summary of all experiments to s3 ({summary_path})")
 
     return all_results
 
@@ -1214,8 +1206,8 @@ if __name__ == "__main__":
 
     tokenizer = model.tokenizer
 
-    df_impact = pd.read_csv("outputs/gpt2-xl/dev_tests/accumulated_impact_gender_train.csv")
-    df_probs = pd.read_csv("outputs/gpt2-xl/dev_tests/out_DLA_gender_train.csv")
+    df_impact = s3_utils.read_csv("outputs/gpt2-xl/dev_tests/accumulated_impact_gender_train.csv")
+    df_probs = s3_utils.read_csv("outputs/gpt2-xl/dev_tests/out_DLA_gender_train.csv")
 
     for beta in [0.3, 0.5]:
         print(f"\n{'#'*60}\n# DPO sweep: beta={beta}\n{'#'*60}")
