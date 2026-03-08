@@ -5,14 +5,16 @@ from transformer_lens import HookedTransformer
 from huggingface_hub import login
 import boto3
 import os
+from dotenv import load_dotenv
 
+load_dotenv()
 
 login(token=os.environ["HF_TOKEN"])
 
-CONDITION = "full"
+CONDITION = "attn"
 TRACING = True
 ACC_ANALYSIS = True
-PERCENTILE = [100]
+PERCENTILE = [0.2, 0.5, 0.8, 1.0, 2.0]
 
 def get_logit_attribution(model, cache, target_token_id, layer):
 
@@ -105,7 +107,7 @@ def layer_tracing(model,
                   dataset):
     df_ids = []
     try:
-        df = pd.read_csv(f"outputs/gpt2-xl/fine_tuned/out_DLA_gender_test_fine_tuned_{CONDITION}_{percentile}.csv")
+        df = pd.read_csv(f"outputs/gpt2-xl/fine_tuned/dpo/out_DLA_gender_test_fine_tuned_{CONDITION}_{percentile}.csv")
         df_ids = df['ID'].tolist()
     except:
         pass
@@ -121,7 +123,7 @@ def layer_tracing(model,
         if len(all_data) % 10 == 0 and id != 0:
             print("Saving intermediate results...")
             df = pd.DataFrame(all_data)
-            df.to_csv(f"outputs/gpt2-xl/fine_tuned/out_DLA_gender_test_fine_tuned_{CONDITION}_{percentile}.csv", index=False)
+            df.to_csv(f"outputs/gpt2-xl/fine_tuned/dpo/out_DLA_gender_test_fine_tuned_{CONDITION}_{percentile}.csv", index=False)
 
         ID = sub_dict['id']
 
@@ -179,7 +181,7 @@ def layer_tracing(model,
 
                 current_prompt += model.to_string(token_id)
     df = pd.DataFrame(all_data)
-    df.to_csv(f"outputs/gpt2-xl/fine_tuned/out_DLA_gender_test_fine_tuned_{CONDITION}_{percentile}.csv", index=False)
+    df.to_csv(f"outputs/gpt2-xl/fine_tuned/dpo/out_DLA_gender_test_fine_tuned_{CONDITION}_{percentile}.csv", index=False)
 
     return all_data
 
@@ -195,7 +197,7 @@ def run_experiments_finetuned(percentile_list,
     test_model.eval()
     for percentile in percentile_list:
 
-        fine_tuned_model = f"best_model_{CONDITION}_{percentile}"
+        fine_tuned_model = f"best_model_dpo_{CONDITION}_{percentile}"
 
         epoch = 10
         while True:
@@ -226,8 +228,8 @@ def run_experiments_finetuned(percentile_list,
 
         if ACC_ANALYSIS:
             print("Starting Accumulation Analysis...")
-            output_filename = f"outputs/gpt2-xl/fine_tuned/accumulated_impact_gender_test_fine_tuned_{CONDITION}_{percentile}.csv"
-            filename = f"outputs/gpt2-xl/fine_tuned/out_DLA_gender_test_fine_tuned_{CONDITION}_{percentile}.csv"
+            output_filename = f"outputs/gpt2-xl/fine_tuned/dpo/accumulated_impact_gender_test_fine_tuned_{CONDITION}_{percentile}.csv"
+            filename = f"outputs/gpt2-xl/fine_tuned/dpo/out_DLA_gender_test_fine_tuned_{CONDITION}_{percentile}.csv"
 
             if os.path.exists(filename):
                 result_df = accumulative_layer_impact(filename)
