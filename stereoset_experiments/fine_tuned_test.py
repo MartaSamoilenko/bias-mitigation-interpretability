@@ -11,10 +11,10 @@ load_dotenv()
 
 login(token=os.environ["HF_TOKEN"])
 
-CONDITION = "attn"
+CONDITION = "attn_impact_mlp"
 TRACING = True
 ACC_ANALYSIS = True
-PERCENTILE = [0.2, 0.5, 0.8, 1.0, 2.0]
+PERCENTILE = [5.0]
 
 def get_logit_attribution(model, cache, target_token_id, layer):
 
@@ -199,7 +199,7 @@ def run_experiments_finetuned(percentile_list,
 
         fine_tuned_model = f"best_model_dpo_{CONDITION}_{percentile}"
 
-        epoch = 10
+        epoch = 0
         while True:
             try:
                 s3_client.download_file(s3_bucket, f"{s3_prefix}/{fine_tuned_model}_epoch_{epoch}.pt", f"checkpoints/{fine_tuned_model}.pt")

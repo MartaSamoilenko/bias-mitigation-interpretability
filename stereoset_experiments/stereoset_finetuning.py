@@ -155,40 +155,39 @@ def identify_top_mlp_probability(
 
 
 
-def identify_top_layers_attn_impact_mlp(
+def identify_mlp_from_attn(
     df_impact: pd.DataFrame,
     df_probs: pd.DataFrame,
-    df_impact_analysis : pd.DataFrame,
+    df_impact_analysis: pd.DataFrame,
     percentile: float,
 ) -> Tuple[pd.Series, List[str]]:
-
+    """Selects MLP layers at the same layers where top-impact attention heads reside.
+    Only MLP component IDs are returned -- attention heads stay frozen.
+    """
     head_df = df_impact_analysis[
         (df_impact_analysis['Model_Preference'] == 'stereotype') &
         (df_impact_analysis['Component'].str.startswith('Head'))
     ].copy()
-
     head_df['Head_ID'] = head_df['Layer'].astype(str) + "_" + head_df['Component']
     mean_head_impact = head_df.groupby('Head_ID')['Accumulated_Impact'].mean()
-
     threshold = mean_head_impact.quantile(1 - (percentile / 100))
     top_heads = mean_head_impact[mean_head_impact >= threshold]
-
-    top_layers = list(set([int(head_id.split('_')[0]) for head_id in top_heads.index]))
+    top_layers = set(int(h.split('_')[0]) for h in top_heads.index)
 
     mlp_df = df_impact_analysis[
         (df_impact_analysis['Model_Preference'] == 'stereotype') &
         (df_impact_analysis['Component'] == 'MLP') &
         (df_impact_analysis['Layer'].isin(top_layers))
     ].copy()
+    mlp_df['MLP_ID'] = mlp_df['Layer'].astype(str) + "_MLP"
+    mlp_series = mlp_df.groupby('MLP_ID')['Accumulated_Impact'].mean().sort_values(ascending=False)
 
-    mlp_df['Component_ID'] = mlp_df['Layer'].astype(str) + "_" + mlp_df['Component']
-    mean_mlp_impact = mlp_df.groupby('Component_ID')['Accumulated_Impact'].mean()
+    target_ids = df_impact_analysis[
+        df_impact_analysis['Model_Preference'] == 'stereotype'
+    ]['ID'].unique().tolist()
 
-    combined_impacts = pd.concat([top_heads, mean_mlp_impact]).sort_values(ascending=False)
+    return mlp_series, target_ids
 
-    target_ids = df_impact_analysis[df_impact_analysis['Model_Preference'] == 'stereotype']['ID'].unique().tolist()
-
-    return combined_impacts, target_ids
 
 def df_impact_analysis_selection(
     df_impact: pd.DataFrame,
@@ -432,19 +431,10 @@ def configure_trainable_parameters(
                 layer_idx, head_idx = int(parts[0]), int(parts[2])
                 attn_head_targets_by_layer.setdefault(layer_idx, []).append(head_idx)
 
-    elif condition in ['mlp_impact_only', 'mlp_probability_only']:
+    elif condition in ['mlp_impact_only', 'mlp_probability_only', 'mlp_from_attn']:
         for item in target_components:
             parts = item.split('_')
             mlp_targets.add(int(parts[0]))
-
-    elif condition == 'attn_impact_mlp':
-        for item in target_components:
-            parts = item.split('_')
-            if len(parts) >= 3:
-                layer_idx, head_idx = int(parts[0]), int(parts[2])
-                attn_head_targets_by_layer.setdefault(layer_idx, []).append(head_idx)
-            else:
-                mlp_targets.add(int(parts[0]))
 
     active_params_count = 0
     total_params = 0
@@ -461,7 +451,7 @@ def configure_trainable_parameters(
         except ValueError:
             continue
 
-        if (condition == 'attn' or condition == 'attn_impact_mlp') and layer_idx in attn_head_targets_by_layer and "attn" in name:
+        if condition == 'attn' and layer_idx in attn_head_targets_by_layer and "attn" in name:
             active_heads = attn_head_targets_by_layer[layer_idx]
             if param.shape[0] == n_heads:
                 param.requires_grad = True
@@ -472,17 +462,14 @@ def configure_trainable_parameters(
                 params_per_head = param.numel() // n_heads
                 active_params_count += params_per_head * len(active_heads)
 
-        elif condition in ['mlp_impact_only', 'attn_impact_mlp', 'mlp_probability_only'] and layer_idx in mlp_targets and "mlp" in name:
+        elif condition in ['mlp_impact_only', 'mlp_probability_only', 'mlp_from_attn'] and layer_idx in mlp_targets and "mlp" in name:
             param.requires_grad = True
             active_params_count += param.numel()
 
     print(f"\n--- Unfreezing Summary ({condition}) ---")
     if condition == 'attn':
         print(f"Targeted Layers (Attn): {list(attn_head_targets_by_layer)}")
-    elif condition in ['mlp_impact_only', 'mlp_probability_only']:
-        print(f"Targeted Layers (MLP): {list(mlp_targets)}")
-    elif condition == 'attn_impact_mlp':
-        print(f"Targeted Layers (Attn): {list(attn_head_targets_by_layer)}")
+    elif condition in ['mlp_impact_only', 'mlp_probability_only', 'mlp_from_attn']:
         print(f"Targeted Layers (MLP): {list(mlp_targets)}")
     if condition == 'full':
         active_params_count = total_params
@@ -897,14 +884,13 @@ def run_experiments(
 
         target_ids = []
         top_heads = pd.Series()
-        combined_impacts = pd.Series()
         top_mlps = pd.Series()
 
         if config.experiment_type == 'attn':
             top_heads, target_ids = identify_top_impact_heads(
                 df_impact, df_probability_info, df_impact_analysis, percentile)
-        if config.experiment_type == 'attn_impact_mlp':
-            combined_impacts, target_ids = identify_top_layers_attn_impact_mlp(
+        if config.experiment_type == 'mlp_from_attn':
+            top_mlps, target_ids = identify_mlp_from_attn(
                 df_impact, df_probability_info, df_impact_analysis, percentile)
         if config.experiment_type == 'mlp_impact_only':
             top_mlps, target_ids = identify_top_mlp_impact(
@@ -925,10 +911,8 @@ def run_experiments(
         target_components = []
         if config.experiment_type == 'attn':
             target_components = top_heads.index.tolist()
-        elif config.experiment_type in ['mlp_impact_only', 'mlp_probability_only']:
+        elif config.experiment_type in ['mlp_impact_only', 'mlp_probability_only', 'mlp_from_attn']:
             target_components = top_mlps.index.tolist()
-        elif config.experiment_type == 'attn_impact_mlp':
-            target_components = combined_impacts.index.tolist()
 
         model, num_params, hook_handles = configure_trainable_parameters(
             model, target_components=target_components, condition=config.experiment_type)
@@ -1021,8 +1005,8 @@ def run_experiments(
     return experiment_results
 
 
-ALL_EXPERIMENT_TYPES = ['attn_impact_mlp']
-DEFAULT_PERCENTILES = [0.8, 0.5, 0.2, 20.0, 10.0]
+ALL_EXPERIMENT_TYPES = ['mlp_from_attn', 'mlp_impact_only']
+DEFAULT_PERCENTILES = [0.5, 0.8, 1.0, 5.0, 10.0]
 
 
 def run_all_experiments(
@@ -1060,14 +1044,13 @@ def run_all_experiments(
 
             target_ids = []
             top_heads = pd.Series()
-            combined_impacts = pd.Series()
             top_mlps = pd.Series()
 
             if exp_type == 'attn':
                 top_heads, target_ids = identify_top_impact_heads(
                     df_impact, df_probability_info, df_impact_analysis, percentile)
-            elif exp_type == 'attn_impact_mlp':
-                combined_impacts, target_ids = identify_top_layers_attn_impact_mlp(
+            elif exp_type == 'mlp_from_attn':
+                top_mlps, target_ids = identify_mlp_from_attn(
                     df_impact, df_probability_info, df_impact_analysis, percentile)
             elif exp_type == 'mlp_impact_only':
                 top_mlps, target_ids = identify_top_mlp_impact(
@@ -1084,10 +1067,8 @@ def run_all_experiments(
             target_components = []
             if exp_type == 'attn':
                 target_components = top_heads.index.tolist()
-            elif exp_type == 'mlp_impact_only':
+            elif exp_type in ['mlp_impact_only', 'mlp_from_attn']:
                 target_components = top_mlps.index.tolist()
-            elif exp_type == 'attn_impact_mlp':
-                target_components = combined_impacts.index.tolist()
 
             model, num_params, hook_handles = configure_trainable_parameters(
                 model, target_components=target_components, condition=exp_type)
@@ -1236,9 +1217,12 @@ if __name__ == "__main__":
     df_impact = pd.read_csv("outputs/gpt2-xl/dev_tests/accumulated_impact_gender_train.csv")
     df_probs = pd.read_csv("outputs/gpt2-xl/dev_tests/out_DLA_gender_train.csv")
 
-    config_dpo = ExperimentConfig(loss_type="dpo", dpo_beta=0.3)
-    results_dpo = run_all_experiments(model, tokenizer, df_impact, df_probs, config_dpo)
+    for beta in [0.3, 0.5]:
+        print(f"\n{'#'*60}\n# DPO sweep: beta={beta}\n{'#'*60}")
+        config_dpo = ExperimentConfig(loss_type="dpo", dpo_beta=beta)
+        run_all_experiments(model, tokenizer, df_impact, df_probs, config_dpo)
 
-    # --- Improved SFT: sweep all experiment types and percentiles (uncomment to run) ---
-    # config_sft = ExperimentConfig(loss_type="sft_improved", ul_weight=1.0)
-    # results_sft = run_all_experiments(model, tokenizer, df_impact, df_probs, config_sft)
+    for ul_w in [0.5, 1.0]:
+        print(f"\n{'#'*60}\n# SFT sweep: ul_weight={ul_w}\n{'#'*60}")
+        config_sft = ExperimentConfig(loss_type="sft_improved", ul_weight=ul_w)
+        run_all_experiments(model, tokenizer, df_impact, df_probs, config_sft)
