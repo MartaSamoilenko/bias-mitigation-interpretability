@@ -13,10 +13,8 @@ load_dotenv()
 
 login(token=os.environ["HF_TOKEN"])
 
-CONDITION = "attn_impact_mlp"
 TRACING = True
 ACC_ANALYSIS = True
-PERCENTILE = [5.0]
 
 def get_logit_attribution(model, cache, target_token_id, layer):
 
@@ -104,12 +102,10 @@ def accumulative_layer_impact(filename):
 
     return result_df
 
-def layer_tracing(model,
-                  percentile,
-                  dataset):
+def layer_tracing(model, dataset, output_path):
     df_ids = []
     try:
-        df = s3_utils.read_csv(f"outputs/gpt2-xl/fine_tuned/dpo/out_DLA_gender_test_fine_tuned_{CONDITION}_{percentile}.csv")
+        df = s3_utils.read_csv(output_path)
         df_ids = df['ID'].tolist()
     except:
         pass
@@ -122,10 +118,10 @@ def layer_tracing(model,
             continue
 
         print(f"Processing item {idx}...")
-        if len(all_data) % 10 == 0 and id != 0:
+        if len(all_data) % 10 == 0 and idx != 0:
             print("Saving intermediate results to S3...")
             df = pd.DataFrame(all_data)
-            s3_utils.write_csv(df, f"outputs/gpt2-xl/fine_tuned/dpo/out_DLA_gender_test_fine_tuned_{CONDITION}_{percentile}.csv")
+            s3_utils.write_csv(df, output_path)
 
         ID = sub_dict['id']
 
@@ -155,7 +151,6 @@ def layer_tracing(model,
 
                     p_token = layer_probs[token_id].item()
 
-                    # calculation of accumulated probability
                     layer_accumulated_probs[layer] *= p_token
 
                     head_contribs, mlp_contrib = get_logit_attribution(
@@ -171,8 +166,8 @@ def layer_tracing(model,
                         "Is_First_Token": (token_pos == 0),
                         "Type": stereotype_key,
                         "Layer": layer,
-                        "Layer_Accumulated_Prob": layer_accumulated_probs[layer].item(), # Prob of seq up to this token
-                        "Token_Instant_Prob": p_token, # Prob of just this token
+                        "Layer_Accumulated_Prob": layer_accumulated_probs[layer].item(),
+                        "Token_Instant_Prob": p_token,
                         "MLP_Logit_Impact": mlp_contrib.item(),
                     }
 
@@ -183,35 +178,37 @@ def layer_tracing(model,
 
                 current_prompt += model.to_string(token_id)
     df = pd.DataFrame(all_data)
-    s3_utils.write_csv(df, f"outputs/gpt2-xl/fine_tuned/dpo/out_DLA_gender_test_fine_tuned_{CONDITION}_{percentile}.csv")
+    s3_utils.write_csv(df, output_path)
 
     return all_data
 
-def run_experiments_finetuned(percentile_list,
+def run_experiments_finetuned(run_ids,
                               s3_bucket: str = "modelsfinetuned",
-                              s3_prefix: str = "gpt2-xl-finetuned"
-                            ):
+                              s3_prefix: str = "gpt2-xl-finetuned"):
     s3_client = boto3.client('s3',
                              aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
                              aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"])
 
     test_model = HookedTransformer.from_pretrained("gpt2-xl")
     test_model.eval()
-    for percentile in percentile_list:
 
-        fine_tuned_model = f"best_model_dpo_{CONDITION}_{percentile}"
+    for run_id in run_ids:
+        print(f"\n{'='*60}\nEvaluating run: {run_id}\n{'='*60}")
 
-        epoch = 0
-        while True:
-            try:
-                s3_client.download_file(s3_bucket, f"{s3_prefix}/{fine_tuned_model}_epoch_{epoch}.pt", f"checkpoints/{fine_tuned_model}.pt")
-                test_model.load_state_dict(torch.load(f"checkpoints/{fine_tuned_model}.pt"))
-                os.remove(f"checkpoints/{fine_tuned_model}.pt")
-                break
-            except:
-                epoch -= 1
-                if epoch == -1:
-                    raise Exception("Model not found in S3.")
+        log = s3_utils.read_json(f"outputs/gpt2-xl/fine_tuned/logs/{run_id}.json")
+        best_epoch = log["best_epoch"] - 1
+
+        checkpoint_key = f"{s3_prefix}/best_model_{run_id}_epoch_{best_epoch}.pt"
+        local_tmp = f"checkpoints/{run_id}.pt"
+        os.makedirs("checkpoints", exist_ok=True)
+
+        print(f"Downloading checkpoint s3://{s3_bucket}/{checkpoint_key} ...")
+        s3_client.download_file(s3_bucket, checkpoint_key, local_tmp)
+        test_model.load_state_dict(torch.load(local_tmp, weights_only=True))
+        os.remove(local_tmp)
+        print("Checkpoint loaded.")
+
+        results_base = f"outputs/gpt2-xl/fine_tuned/results/{run_id}"
 
         if TRACING:
             test_file_path = "data/stereoset/splits/gender_test.json"
@@ -219,23 +216,33 @@ def run_experiments_finetuned(percentile_list,
             test_data = s3_utils.read_json(test_file_path)
             print(f"Loaded {len(test_data)} testing examples.")
 
+            dla_path = f"{results_base}/out_DLA_gender_test.csv"
             print("Starting Tracing on Testing Data...")
-            layer_tracing(test_model, percentile, test_data)
+            layer_tracing(test_model, test_data, dla_path)
             print("Tracing Complete.")
 
         if ACC_ANALYSIS:
             print("Starting Accumulation Analysis...")
-            output_filename = f"outputs/gpt2-xl/fine_tuned/dpo/accumulated_impact_gender_test_fine_tuned_{CONDITION}_{percentile}.csv"
-            filename = f"outputs/gpt2-xl/fine_tuned/dpo/out_DLA_gender_test_fine_tuned_{CONDITION}_{percentile}.csv"
+            dla_path = f"{results_base}/out_DLA_gender_test.csv"
+            acc_path = f"{results_base}/accumulated_impact_gender_test.csv"
 
             try:
-                result_df = accumulative_layer_impact(filename)
-                s3_utils.write_csv(result_df, output_filename)
-                print(f"Done! Saved accumulated results to S3 ({output_filename})")
+                result_df = accumulative_layer_impact(dla_path)
+                s3_utils.write_csv(result_df, acc_path)
+                print(f"Done! Saved accumulated results to S3 ({acc_path})")
             except Exception as e:
-                print(f"File {filename} not found on S3: {e}. Run TRACING first.")
+                print(f"DLA file not found on S3: {e}. Run with TRACING=True first.")
 
-        print(f"Done analysis for percentile {percentile}! Saved accumulated results to {output_filename}.")
+        print(f"Done analysis for {run_id}!")
+
 
 if __name__ == "__main__":
-    run_experiments_finetuned(PERCENTILE)
+    log_keys = s3_utils.list_keys("outputs/gpt2-xl/fine_tuned/logs/")
+    prefix = s3_utils.s3_key("outputs/gpt2-xl/fine_tuned/logs/")
+    run_ids = [
+        k[len(prefix):].replace(".json", "")
+        for k in log_keys
+        if k.endswith(".json") and "all_experiment" not in k
+    ]
+    print(f"Discovered {len(run_ids)} run(s): {run_ids}")
+    run_experiments_finetuned(run_ids)

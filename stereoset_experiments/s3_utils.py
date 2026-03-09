@@ -58,6 +58,17 @@ def write_csv(df: pd.DataFrame, path: str):
     _client().put_object(Bucket=S3_BUCKET, Key=s3_key(path), Body=buf.getvalue())
 
 
+def list_keys(prefix: str) -> list:
+    """List all S3 object keys under the given logical prefix."""
+    client = _client()
+    keys = []
+    paginator = client.get_paginator('list_objects_v2')
+    for page in paginator.paginate(Bucket=S3_BUCKET, Prefix=s3_key(prefix)):
+        for obj in page.get('Contents', []):
+            keys.append(obj['Key'])
+    return keys
+
+
 def write_bytes(data: bytes, path: str):
     _client().put_object(Bucket=S3_BUCKET, Key=s3_key(path), Body=data)
 
