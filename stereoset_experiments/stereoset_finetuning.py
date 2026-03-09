@@ -919,7 +919,10 @@ def run_experiments(
             param.requires_grad = False
 
 
-        run_id = f"{config.loss_type}_{config.experiment_type}_{percentile}"
+        if config.loss_type == "dpo":
+            run_id = f"dpo_{config.experiment_type}_{percentile}_beta{config.dpo_beta}_lr{config.learning_rate}"
+        else:
+            run_id = f"sft_{config.experiment_type}_{percentile}_ul{config.ul_weight}_lr{config.learning_rate}"
 
         if config.loss_type == "dpo":
             dataset = DPODataset(
@@ -998,7 +1001,7 @@ def run_experiments(
     return experiment_results
 
 
-ALL_EXPERIMENT_TYPES = ['mlp_from_attn', 'mlp_impact_only']
+ALL_EXPERIMENT_TYPES = ['attn', 'mlp_from_attn', 'mlp_impact_only', 'full']
 DEFAULT_PERCENTILES = [0.5, 0.8, 1.0, 5.0, 10.0]
 
 
@@ -1108,7 +1111,10 @@ def run_all_experiments(
             for param in ref_model.parameters():
                 param.requires_grad = False
 
-            run_id = f"{config.loss_type}_{exp_type}_{percentile}"
+            if config.loss_type == "dpo":
+                run_id = f"dpo_{exp_type}_{percentile}_beta{config.dpo_beta}_lr{config.learning_rate}"
+            else:
+                run_id = f"sft_{exp_type}_{percentile}_ul{config.ul_weight}_lr{config.learning_rate}"
 
             if config.loss_type == "dpo":
                 dataset = DPODataset(
@@ -1205,18 +1211,30 @@ def run_all_experiments(
 
 if __name__ == "__main__":
     model = HookedTransformer.from_pretrained("gpt2-xl")
-
     tokenizer = model.tokenizer
 
     df_impact = s3_utils.read_csv("outputs/gpt2-xl/dev_tests/accumulated_impact_gender_train.csv")
     df_probs = s3_utils.read_csv("outputs/gpt2-xl/dev_tests/out_DLA_gender_train.csv")
 
+    ALL_LRS = [1e-5, 5e-6, 1e-6]
+    FULL_LRS = [5e-6, 1e-6]
+
     for beta in [0.3, 0.5]:
-        print(f"\n{'#'*60}\n# DPO sweep: beta={beta}\n{'#'*60}")
-        config_dpo = ExperimentConfig(loss_type="dpo", dpo_beta=beta)
-        run_all_experiments(model, tokenizer, df_impact, df_probs, config_dpo)
+        for lr in ALL_LRS:
+            exp_types = [t for t in ALL_EXPERIMENT_TYPES if t != 'full']
+            if lr in FULL_LRS:
+                exp_types = ALL_EXPERIMENT_TYPES
+            print(f"\n{'#'*60}\n# DPO: beta={beta}, lr={lr}\n{'#'*60}")
+            config_dpo = ExperimentConfig(loss_type="dpo", dpo_beta=beta, learning_rate=lr)
+            run_all_experiments(model, tokenizer, df_impact, df_probs, config_dpo,
+                                experiment_types=exp_types)
 
     for ul_w in [0.5, 1.0]:
-        print(f"\n{'#'*60}\n# SFT sweep: ul_weight={ul_w}\n{'#'*60}")
-        config_sft = ExperimentConfig(loss_type="sft_improved", ul_weight=ul_w)
-        run_all_experiments(model, tokenizer, df_impact, df_probs, config_sft)
+        for lr in ALL_LRS:
+            exp_types = [t for t in ALL_EXPERIMENT_TYPES if t != 'full']
+            if lr in FULL_LRS:
+                exp_types = ALL_EXPERIMENT_TYPES
+            print(f"\n{'#'*60}\n# SFT: ul_weight={ul_w}, lr={lr}\n{'#'*60}")
+            config_sft = ExperimentConfig(loss_type="sft_improved", ul_weight=ul_w, learning_rate=lr)
+            run_all_experiments(model, tokenizer, df_impact, df_probs, config_sft,
+                                experiment_types=exp_types)
