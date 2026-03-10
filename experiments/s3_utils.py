@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 S3_BUCKET = "modelsfinetuned"
-S3_PREFIX = "stereoset_experiments"
+S3_PREFIX = "experiments"
 
 
 def _client():
@@ -22,7 +22,7 @@ def _client():
 
 def s3_key(local_path: str) -> str:
     """Converts a local relative path like 'data/stereoset/test.json'
-    to an S3 key like 'stereoset_experiments/data/stereoset/test.json'."""
+    to an S3 key like 'experiments/data/stereoset/test.json'."""
     return f"{S3_PREFIX}/{local_path}"
 
 
