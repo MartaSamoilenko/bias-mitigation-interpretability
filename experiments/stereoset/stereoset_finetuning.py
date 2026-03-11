@@ -12,7 +12,9 @@ from torch.utils.data import Dataset, DataLoader, random_split
 from torch import nn
 from dotenv import load_dotenv
 
-import s3_utils
+
+
+from experiments import s3_utils
 
 # try:
 from transformer_lens import HookedTransformer

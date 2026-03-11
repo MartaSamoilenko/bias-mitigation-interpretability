@@ -22,98 +22,79 @@ ACC_ANALYSIS = True
 
 
 
-def full_sentence_tracing(model, dataset, output_path):
-    """Compute full-sentence probability and DLA at the pronoun position.
+def two_stage_tracing(model, dataset, pronoun_probs_path, suffix_probs_path):
+    """Two-stage Winogender bias measurement.
 
-    For each example and each pronoun variant, tokenizes the full sentence,
-    runs a single forward pass, and:
-      - computes per-layer probability of the pronoun token (for DLA analysis)
-      - computes full-sentence log-probability (sum of log P(t_i | t_<i))
-      - records DLA (head/MLP contributions) at the pronoun token position
+    Stage 1 — Pronoun prediction: forward pass on prefix only. At the last
+    prefix position, record P(pronoun) and DLA for each candidate pronoun.
+    Output is compatible with accumulative_layer_impact().
+
+    Stage 2 — Coreference resolution: for each pronoun variant, forward pass
+    on the full sentence. Compute log P(suffix | prefix + pronoun) to
+    determine which pronoun best fits the continuation.
     """
-    df_ids = []
+    done_ids_s1 = set()
     try:
-        df = s3_utils.read_csv(output_path)
-        df_ids = df['ID'].tolist()
+        df = s3_utils.read_csv(pronoun_probs_path)
+        done_ids_s1 = set(df['ID'].unique().tolist())
     except Exception:
         pass
 
-    all_data = []
+    stage1_data = []
+    stage2_data = []
 
     for idx, sub_dict in enumerate(dataset):
-        if sub_dict['id'] in df_ids:
-            all_data.append(df_ids.index(sub_dict['id']))
+        if sub_dict['id'] in done_ids_s1:
             continue
 
         print(f"Processing item {idx} ({sub_dict['id']})...")
-        if len(all_data) % 10 == 0 and idx != 0:
+        if len(stage1_data) > 0 and idx % 10 == 0:
             print("Saving intermediate results to S3...")
-            df = pd.DataFrame(all_data)
-            s3_utils.write_csv(df, output_path)
+            s3_utils.write_csv(pd.DataFrame(stage1_data), pronoun_probs_path)
+            s3_utils.write_csv(pd.DataFrame(stage2_data), suffix_probs_path)
 
         ID = sub_dict['id']
         prefix = sub_dict['prefix']
         full_sentences = sub_dict['full_sentences']
         candidates = sub_dict['targets']
 
+        # ── Stage 1: pronoun prediction from prefix ──────────────────────
         prefix_tokens = model.tokenizer.encode(prefix)
         prefix_len = len(prefix_tokens)
+        cache_pos = prefix_len - 1  # last prefix token predicts the pronoun
+
+        with torch.no_grad():
+            _, prefix_cache = model.run_with_cache(prefix)
 
         for stereotype_key, pronoun_word in candidates.items():
-            full_sent = full_sentences[stereotype_key]
-            full_tokens = model.tokenizer.encode(full_sent)
-
             pronoun_with_space = ' ' + pronoun_word
-            pronoun_tokens = model.tokenizer.encode(pronoun_with_space)
-            pronoun_len = len(pronoun_tokens)
+            pronoun_token_ids = model.tokenizer.encode(pronoun_with_space)
 
-            with torch.no_grad():
-                _, cache = model.run_with_cache(full_sent)
-
-            # Full-sentence log-probability (teacher-forced, from last layer)
-            sentence_log_prob = 0.0
-            for t_pos in range(1, len(full_tokens)):
-                hidden_last_layer = cache[f"blocks.{model.cfg.n_layers - 1}.hook_resid_post"][0, t_pos - 1]
-                logits_t = model.unembed(model.ln_final(hidden_last_layer))
-                probs_t = torch.softmax(logits_t, dim=-1)
-                sentence_log_prob += torch.log(probs_t[full_tokens[t_pos]] + 1e-30).item()
-
-            # DLA at each layer, focused on pronoun token positions
-            for tok_offset in range(pronoun_len):
-                token_pos_in_sent = prefix_len + tok_offset
-                if token_pos_in_sent >= len(full_tokens):
-                    break
-                target_token_id = full_tokens[token_pos_in_sent]
-
-                # The position we read from the cache is token_pos_in_sent - 1
-                # (the hidden state after processing the *previous* token predicts *this* token)
-                cache_pos = token_pos_in_sent - 1 if token_pos_in_sent > 0 else 0
-
+            for tok_offset, target_token_id in enumerate(pronoun_token_ids):
                 layer_accumulated_probs = torch.ones(model.cfg.n_layers, device='cpu')
 
                 for layer in range(model.cfg.n_layers):
-                    hidden_state = cache[f"blocks.{layer}.hook_resid_post"][0, cache_pos]
-                    normalized_resid = model.ln_final(hidden_state)
-                    layer_logits = model.unembed(normalized_resid)
-                    layer_probs = torch.softmax(layer_logits, dim=-1)
+                    hidden = prefix_cache[f"blocks.{layer}.hook_resid_post"][0, cache_pos]
+                    norm_hidden = model.ln_final(hidden)
+                    logits = model.unembed(norm_hidden)
+                    probs = torch.softmax(logits, dim=-1)
 
-                    p_token = layer_probs[target_token_id].item()
+                    p_token = probs[target_token_id].item()
                     layer_accumulated_probs[layer] *= p_token
 
-                    # DLA: project head outputs and MLP output onto the target token direction
-                    raw_unembed_dir = model.W_U[:, target_token_id]
+                    unembed_dir = model.W_U[:, target_token_id]
 
-                    attn_result = cache[f"blocks.{layer}.attn.hook_z"][0, cache_pos]
+                    attn_result = prefix_cache[f"blocks.{layer}.attn.hook_z"][0, cache_pos]
                     W_O = model.W_O[layer]
-                    head_contributions = torch.einsum("hd, hdm, m -> h",
-                                                      attn_result, W_O, raw_unembed_dir)
+                    head_contribs = torch.einsum("hd, hdm, m -> h",
+                                                 attn_result, W_O, unembed_dir)
 
-                    mlp_out = cache[f"blocks.{layer}.hook_mlp_out"][0, cache_pos]
-                    mlp_contribution = torch.dot(mlp_out, raw_unembed_dir)
+                    mlp_out = prefix_cache[f"blocks.{layer}.hook_mlp_out"][0, cache_pos]
+                    mlp_contrib = torch.dot(mlp_out, unembed_dir)
 
                     row = {
                         "ID": ID,
-                        "Prompt": full_sent,
+                        "Prompt": prefix,
                         "Candidate": pronoun_word,
                         "Token_Str": model.to_string(target_token_id),
                         "Token_Position": tok_offset,
@@ -122,18 +103,50 @@ def full_sentence_tracing(model, dataset, output_path):
                         "Layer": layer,
                         "Layer_Accumulated_Prob": layer_accumulated_probs[layer].item(),
                         "Token_Instant_Prob": p_token,
-                        "Sentence_Log_Prob": sentence_log_prob,
-                        "MLP_Logit_Impact": mlp_contribution.item(),
+                        "MLP_Logit_Impact": mlp_contrib.item(),
                     }
-
-                    for head_idx, score in enumerate(head_contributions):
+                    for head_idx, score in enumerate(head_contribs):
                         row[f"Head_{head_idx}"] = score.item()
 
-                    all_data.append(row)
+                    stage1_data.append(row)
 
-    df = pd.DataFrame(all_data)
-    s3_utils.write_csv(df, output_path)
-    return all_data
+        del prefix_cache
+
+        # ── Stage 2: suffix probability conditioned on each pronoun ──────
+        for stereotype_key, pronoun_word in candidates.items():
+            full_sent = full_sentences[stereotype_key]
+            full_tokens = model.tokenizer.encode(full_sent)
+
+            pronoun_with_space = ' ' + pronoun_word
+            pronoun_token_ids = model.tokenizer.encode(pronoun_with_space)
+            suffix_start = prefix_len + len(pronoun_token_ids)
+
+            with torch.no_grad():
+                _, full_cache = model.run_with_cache(full_sent)
+
+            n_layers = model.cfg.n_layers
+            suffix_log_prob = 0.0
+            for t_pos in range(suffix_start, len(full_tokens)):
+                hidden = full_cache[f"blocks.{n_layers - 1}.hook_resid_post"][0, t_pos - 1]
+                logits_t = model.unembed(model.ln_final(hidden))
+                probs_t = torch.softmax(logits_t, dim=-1)
+                suffix_log_prob += torch.log(probs_t[full_tokens[t_pos]] + 1e-30).item()
+
+            stage2_data.append({
+                "ID": ID,
+                "Type": stereotype_key,
+                "Candidate": pronoun_word,
+                "Suffix_Log_Prob": suffix_log_prob,
+            })
+
+            del full_cache
+
+    if stage1_data:
+        s3_utils.write_csv(pd.DataFrame(stage1_data), pronoun_probs_path)
+    if stage2_data:
+        s3_utils.write_csv(pd.DataFrame(stage2_data), suffix_probs_path)
+
+    return stage1_data, stage2_data
 
 
 def accumulative_layer_impact(filename):
@@ -185,7 +198,8 @@ def accumulative_layer_impact(filename):
     return result_df
 
 
-DLA_PATH = "outputs/gpt2-xl/winogender/out_DLA_winogender.csv"
+PRONOUN_PROBS_PATH = "outputs/gpt2-xl/winogender/pronoun_probs.csv"
+SUFFIX_PROBS_PATH = "outputs/gpt2-xl/winogender/suffix_probs.csv"
 ACC_PATH = "outputs/gpt2-xl/winogender/accumulated_impact_winogender.csv"
 
 
@@ -199,13 +213,13 @@ def run_baseline():
     print(f"Loaded {len(dataset)} examples.")
 
     if TRACING:
-        print("Starting full-sentence DLA tracing...")
-        full_sentence_tracing(model, dataset, DLA_PATH)
+        print("Starting two-stage tracing...")
+        two_stage_tracing(model, dataset, PRONOUN_PROBS_PATH, SUFFIX_PROBS_PATH)
         print("Tracing complete.")
 
     if ACC_ANALYSIS:
-        print("Computing accumulated impact...")
-        result_df = accumulative_layer_impact(DLA_PATH)
+        print("Computing accumulated impact from Stage 1 pronoun DLA...")
+        result_df = accumulative_layer_impact(PRONOUN_PROBS_PATH)
         s3_utils.write_csv(result_df, ACC_PATH)
         print(f"Saved accumulated impact to S3: {ACC_PATH}")
 
@@ -240,17 +254,19 @@ def run_finetuned(run_id):
     dataset = s3_utils.read_json("data/winogender/winogender_dataset.json")
     print(f"Loaded {len(dataset)} examples.")
 
-    ft_dla_path = f"outputs/gpt2-xl/winogender/finetuned/{run_id}/out_DLA_winogender.csv"
-    ft_acc_path = f"outputs/gpt2-xl/winogender/finetuned/{run_id}/accumulated_impact_winogender.csv"
+    ft_base = f"outputs/gpt2-xl/winogender/finetuned/{run_id}"
+    ft_pronoun_path = f"{ft_base}/pronoun_probs.csv"
+    ft_suffix_path = f"{ft_base}/suffix_probs.csv"
+    ft_acc_path = f"{ft_base}/accumulated_impact_winogender.csv"
 
     if TRACING:
-        print("Starting full-sentence DLA tracing on fine-tuned model...")
-        full_sentence_tracing(model, dataset, ft_dla_path)
+        print("Starting two-stage tracing on fine-tuned model...")
+        two_stage_tracing(model, dataset, ft_pronoun_path, ft_suffix_path)
         print("Tracing complete.")
 
     if ACC_ANALYSIS:
         print("Computing accumulated impact for fine-tuned model...")
-        result_df = accumulative_layer_impact(ft_dla_path)
+        result_df = accumulative_layer_impact(ft_pronoun_path)
         s3_utils.write_csv(result_df, ft_acc_path)
         print(f"Saved accumulated impact to S3: {ft_acc_path}")
 
