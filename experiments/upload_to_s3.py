@@ -1,5 +1,5 @@
 import os
-from s3_utils import _client, S3_BUCKET, S3_PREFIX
+from experiments.s3_utils import _client, S3_BUCKET, S3_PREFIX
 
 
 def upload_directory(local_dir: str):

@@ -6,7 +6,7 @@ from huggingface_hub import login
 import os
 import random
 
-import s3_utils
+from experiments import s3_utils
 
 login(token=os.environ["HF_TOKEN"])
 
