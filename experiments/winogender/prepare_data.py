@@ -2,7 +2,7 @@ import csv
 import os
 from collections import defaultdict
 
-import s3_utils
+from experiments import s3_utils
 
 TEMPLATES_PATH = os.path.join(os.path.dirname(__file__),
                               "winogender-schemas", "data", "templates.tsv")

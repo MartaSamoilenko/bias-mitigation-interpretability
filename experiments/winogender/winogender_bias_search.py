@@ -243,35 +243,47 @@ def accumulative_layer_impact(filename):
     return pd.concat([mlp_data, head_data], ignore_index=True)
 
 
-PRONOUN_PROBS_PATH = "outputs/gpt2-xl/winogender/pronoun_probs.csv"
-SUFFIX_PROBS_PATH = "outputs/gpt2-xl/winogender/suffix_probs.csv"
-ACC_PATH = "outputs/gpt2-xl/winogender/accumulated_impact_winogender.csv"
+TRAIN_DATASET_PATH = "data/winogender/winogender_paired_dataset.json"
+TEST_DATASET_PATH = "data/winogender/winogender_test_dataset.json"
+
+BASELINE_OUTPUT_DIR = "outputs/gpt2-xl/winogender"
 
 
-def run_baseline():
+def run_baseline(dataset_path=None, tag=""):
+    if dataset_path is None:
+        dataset_path = TRAIN_DATASET_PATH
+
+    pronoun_path = f"{BASELINE_OUTPUT_DIR}/pronoun_probs{tag}.csv"
+    suffix_path = f"{BASELINE_OUTPUT_DIR}/suffix_probs{tag}.csv"
+    acc_path = f"{BASELINE_OUTPUT_DIR}/accumulated_impact_winogender{tag}.csv"
+
     print("Loading GPT-2 XL baseline ...")
     model = HookedTransformer.from_pretrained("gpt2-xl")
     model.eval()
 
-    print("Loading paired Winogender dataset from S3 ...")
-    dataset = s3_utils.read_json("data/winogender/winogender_paired_dataset.json")
+    print(f"Loading Winogender dataset from S3 ({dataset_path}) ...")
+    dataset = s3_utils.read_json(dataset_path)
     print(f"Loaded {len(dataset)} pairs.")
 
     if TRACING:
         print("Starting paired tracing ...")
-        paired_tracing(model, dataset, PRONOUN_PROBS_PATH, SUFFIX_PROBS_PATH)
+        paired_tracing(model, dataset, pronoun_path, suffix_path)
         print("Tracing complete.")
 
     if ACC_ANALYSIS:
         print("Computing accumulated impact (occupation sentences only) ...")
-        result_df = accumulative_layer_impact(PRONOUN_PROBS_PATH)
-        s3_utils.write_csv(result_df, ACC_PATH)
-        print(f"Saved accumulated impact to S3: {ACC_PATH}")
+        result_df = accumulative_layer_impact(pronoun_path)
+        s3_utils.write_csv(result_df, acc_path)
+        print(f"Saved accumulated impact to S3: {acc_path}")
 
 
-def run_finetuned(run_id):
+def run_finetuned(run_id, dataset_path=None, tag="",
+                  logs_dir="outputs/gpt2-xl/winogender/fine_tuned/logs",
+                  s3_prefix="gpt2-xl-finetuned-winogender"):
+    if dataset_path is None:
+        dataset_path = TRAIN_DATASET_PATH
+
     s3_bucket = "modelsfinetuned"
-    s3_prefix = "gpt2-xl-finetuned"
 
     s3_client = boto3.client(
         "s3",
@@ -283,7 +295,7 @@ def run_finetuned(run_id):
     model = HookedTransformer.from_pretrained("gpt2-xl")
     model.eval()
 
-    log = s3_utils.read_json(f"outputs/gpt2-xl/fine_tuned/logs/{run_id}.json")
+    log = s3_utils.read_json(f"{logs_dir}/{run_id}.json")
     best_epoch = log["best_epoch"] - 1
 
     checkpoint_key = f"{s3_prefix}/best_model_{run_id}_epoch_{best_epoch}.pt"
@@ -296,10 +308,11 @@ def run_finetuned(run_id):
     os.remove(local_tmp)
     print("Checkpoint loaded.")
 
-    dataset = s3_utils.read_json("data/winogender/winogender_paired_dataset.json")
+    print(f"Loading Winogender dataset from S3 ({dataset_path}) ...")
+    dataset = s3_utils.read_json(dataset_path)
     print(f"Loaded {len(dataset)} pairs.")
 
-    ft_base = f"outputs/gpt2-xl/winogender/finetuned/{run_id}"
+    ft_base = f"outputs/gpt2-xl/winogender/finetuned/{run_id}{tag}"
     ft_pronoun_path = f"{ft_base}/pronoun_probs.csv"
     ft_suffix_path = f"{ft_base}/suffix_probs.csv"
     ft_acc_path = f"{ft_base}/accumulated_impact_winogender.csv"
@@ -320,9 +333,23 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Winogender DLA tracing")
     parser.add_argument("--run_id", type=str, default=None,
                         help="Fine-tuned run ID. Omit for baseline evaluation.")
+    parser.add_argument("--test", action="store_true",
+                        help="Use the test dataset instead of training set.")
+    parser.add_argument("--dataset_path", type=str, default=None,
+                        help="Custom dataset path (overrides --test default).")
     args = parser.parse_args()
 
-    if args.run_id:
-        run_finetuned(args.run_id)
+    if args.test and args.dataset_path is None:
+        ds_path = TEST_DATASET_PATH
+        ds_tag = "_test"
+    elif args.dataset_path:
+        ds_path = args.dataset_path
+        ds_tag = "_custom"
     else:
-        run_baseline()
+        ds_path = None
+        ds_tag = ""
+
+    if args.run_id:
+        run_finetuned(args.run_id, dataset_path=ds_path, tag=ds_tag)
+    else:
+        run_baseline(dataset_path=ds_path, tag=ds_tag)

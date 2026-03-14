@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 S3_BUCKET = "modelsfinetuned"
-S3_PREFIX = "experiments"
+S3_PREFIX = "stereoset_experiments"
 
 
 def _client():
