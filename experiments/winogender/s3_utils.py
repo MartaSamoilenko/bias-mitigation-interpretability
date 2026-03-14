@@ -24,7 +24,6 @@ def s3_key(local_path: str) -> str:
     """Converts a local relative path like 'data/stereoset/test.json'
     to an S3 key like 'experiments/data/stereoset/test.json'."""
 
-    print(f"{S3_PREFIX}/{local_path}")
     return f"{S3_PREFIX}/{local_path}"
 
 

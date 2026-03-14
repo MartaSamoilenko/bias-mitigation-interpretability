@@ -29,14 +29,14 @@ from experiments.stereoset.stereoset_finetuning import (
 
 load_dotenv()
 
-PRONOUN_PROBS_PATH = "outputs/gpt2-xl/winogender/pronoun_probs.csv"
-ACC_IMPACT_PATH = "outputs/gpt2-xl/winogender/accumulated_impact_winogender.csv"
+PRONOUN_PROBS_PATH = "outputs/gpt2-xl/winogender/baseline/train/pronoun_probs.csv"
+ACC_IMPACT_PATH = "outputs/gpt2-xl/winogender/baseline/train/accumulated_impact.csv"
 METADATA_PATH = "data/winogender/winogender_paired_metadata.json"
 
 DPO_DATASET = "data/winogender/fine-tune-dpo/winogender_dpo.jsonl"
 SFT_DATASET = "data/winogender/fine-tune-sft/winogender_sft.jsonl"
 RESULTS_DIR = "outputs/gpt2-xl/winogender/fine_tuned/logs"
-S3_PREFIX = "gpt2-xl-finetuned-winogender"
+S3_PREFIX = "experiments/outputs/gpt2-xl/winogender/fine_tuned/checkpoints"
 
 ALL_EXPERIMENT_TYPES = ["attn", "mlp_from_attn", "mlp_impact_only", "full"]
 DEFAULT_PERCENTILES = [0.5, 0.8, 1.0, 5.0, 10.0]

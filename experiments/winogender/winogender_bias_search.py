@@ -246,16 +246,26 @@ def accumulative_layer_impact(filename):
 TRAIN_DATASET_PATH = "data/winogender/winogender_paired_dataset.json"
 TEST_DATASET_PATH = "data/winogender/winogender_test_dataset.json"
 
-BASELINE_OUTPUT_DIR = "outputs/gpt2-xl/winogender"
+BASELINE_TRAIN_DIR = "outputs/gpt2-xl/winogender/baseline/train"
+BASELINE_TEST_DIR = "outputs/gpt2-xl/winogender/baseline/test"
+FT_TRAIN_DIR = "outputs/gpt2-xl/winogender/fine_tuned/train"
+FT_TEST_DIR = "outputs/gpt2-xl/winogender/fine_tuned/test"
+FT_LOGS_DIR = "outputs/gpt2-xl/winogender/fine_tuned/logs"
+FT_CHECKPOINTS_PREFIX = "experiments/outputs/gpt2-xl/winogender/fine_tuned/checkpoints"
+
+_SPLIT_DIRS = {"train": BASELINE_TRAIN_DIR, "test": BASELINE_TEST_DIR}
+_SPLIT_DATASETS = {"train": TRAIN_DATASET_PATH, "test": TEST_DATASET_PATH}
+_FT_SPLIT_DIRS = {"train": FT_TRAIN_DIR, "test": FT_TEST_DIR}
 
 
-def run_baseline(dataset_path=None, tag=""):
+def run_baseline(split="train", dataset_path=None):
     if dataset_path is None:
-        dataset_path = TRAIN_DATASET_PATH
+        dataset_path = _SPLIT_DATASETS[split]
 
-    pronoun_path = f"{BASELINE_OUTPUT_DIR}/pronoun_probs{tag}.csv"
-    suffix_path = f"{BASELINE_OUTPUT_DIR}/suffix_probs{tag}.csv"
-    acc_path = f"{BASELINE_OUTPUT_DIR}/accumulated_impact_winogender{tag}.csv"
+    base_dir = _SPLIT_DIRS[split]
+    pronoun_path = f"{base_dir}/pronoun_probs.csv"
+    suffix_path = f"{base_dir}/suffix_probs.csv"
+    acc_path = f"{base_dir}/accumulated_impact.csv"
 
     print("Loading GPT-2 XL baseline ...")
     model = HookedTransformer.from_pretrained("gpt2-xl")
@@ -277,11 +287,9 @@ def run_baseline(dataset_path=None, tag=""):
         print(f"Saved accumulated impact to S3: {acc_path}")
 
 
-def run_finetuned(run_id, dataset_path=None, tag="",
-                  logs_dir="outputs/gpt2-xl/winogender/fine_tuned/logs",
-                  s3_prefix="gpt2-xl-finetuned-winogender"):
+def run_finetuned(run_id, split="train", dataset_path=None):
     if dataset_path is None:
-        dataset_path = TRAIN_DATASET_PATH
+        dataset_path = _SPLIT_DATASETS[split]
 
     s3_bucket = "modelsfinetuned"
 
@@ -295,10 +303,10 @@ def run_finetuned(run_id, dataset_path=None, tag="",
     model = HookedTransformer.from_pretrained("gpt2-xl")
     model.eval()
 
-    log = s3_utils.read_json(f"{logs_dir}/{run_id}.json")
+    log = s3_utils.read_json(f"{FT_LOGS_DIR}/{run_id}.json")
     best_epoch = log["best_epoch"] - 1
 
-    checkpoint_key = f"{s3_prefix}/best_model_{run_id}_epoch_{best_epoch}.pt"
+    checkpoint_key = f"{FT_CHECKPOINTS_PREFIX}/best_model_{run_id}_epoch_{best_epoch}.pt"
     local_tmp = f"checkpoints/{run_id}.pt"
     os.makedirs("checkpoints", exist_ok=True)
 
@@ -312,10 +320,10 @@ def run_finetuned(run_id, dataset_path=None, tag="",
     dataset = s3_utils.read_json(dataset_path)
     print(f"Loaded {len(dataset)} pairs.")
 
-    ft_base = f"outputs/gpt2-xl/winogender/finetuned/{run_id}{tag}"
+    ft_base = f"{_FT_SPLIT_DIRS[split]}/{run_id}"
     ft_pronoun_path = f"{ft_base}/pronoun_probs.csv"
     ft_suffix_path = f"{ft_base}/suffix_probs.csv"
-    ft_acc_path = f"{ft_base}/accumulated_impact_winogender.csv"
+    ft_acc_path = f"{ft_base}/accumulated_impact.csv"
 
     if TRACING:
         print("Starting paired tracing on fine-tuned model ...")
@@ -333,23 +341,14 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Winogender DLA tracing")
     parser.add_argument("--run_id", type=str, default=None,
                         help="Fine-tuned run ID. Omit for baseline evaluation.")
-    parser.add_argument("--test", action="store_true",
-                        help="Use the test dataset instead of training set.")
+    parser.add_argument("--split", type=str, default="train",
+                        choices=["train", "test"],
+                        help="Dataset split to use (default: train).")
     parser.add_argument("--dataset_path", type=str, default=None,
-                        help="Custom dataset path (overrides --test default).")
+                        help="Custom dataset path (overrides --split default).")
     args = parser.parse_args()
 
-    if args.test and args.dataset_path is None:
-        ds_path = TEST_DATASET_PATH
-        ds_tag = "_test"
-    elif args.dataset_path:
-        ds_path = args.dataset_path
-        ds_tag = "_custom"
-    else:
-        ds_path = None
-        ds_tag = ""
-
     if args.run_id:
-        run_finetuned(args.run_id, dataset_path=ds_path, tag=ds_tag)
+        run_finetuned(args.run_id, split=args.split, dataset_path=args.dataset_path)
     else:
-        run_baseline(dataset_path=ds_path, tag=ds_tag)
+        run_baseline(split=args.split, dataset_path=args.dataset_path)

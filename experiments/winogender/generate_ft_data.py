@@ -9,11 +9,11 @@ import argparse
 
 from dotenv import load_dotenv
 
-import s3_utils
+from experiments import s3_utils
 
 load_dotenv()
 
-PRONOUN_PROBS_PATH = "outputs/gpt2-xl/winogender/pronoun_probs.csv"
+PRONOUN_PROBS_PATH = "outputs/gpt2-xl/winogender/baseline/train/pronoun_probs.csv"
 DATASET_PATH = "data/winogender/winogender_paired_dataset.json"
 
 DPO_OUTPUT_PATH = "data/winogender/fine-tune-dpo/winogender_dpo.jsonl"

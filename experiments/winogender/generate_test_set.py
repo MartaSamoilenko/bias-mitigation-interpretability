@@ -14,7 +14,7 @@ import time
 from dotenv import load_dotenv
 from openai import OpenAI
 
-import s3_utils
+from experiments import s3_utils
 
 load_dotenv()
 

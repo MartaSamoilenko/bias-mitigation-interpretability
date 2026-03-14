@@ -24,9 +24,9 @@ load_dotenv()
 
 LOGS_DIR = "outputs/gpt2-xl/winogender/fine_tuned/logs"
 S3_BUCKET = "modelsfinetuned"
-S3_PREFIX = "gpt2-xl-finetuned-winogender"
+S3_PREFIX = "experiments/outputs/gpt2-xl/winogender/fine_tuned/checkpoints"
 TEST_DATASET_PATH = "data/winogender/winogender_test_dataset.json"
-RESULTS_BASE = "outputs/gpt2-xl/winogender/finetuned"
+RESULTS_BASE = "outputs/gpt2-xl/winogender/fine_tuned/test"
 
 
 def discover_run_ids():
@@ -41,9 +41,9 @@ def discover_run_ids():
     return run_ids
 
 
-def _results_exist(run_id, tag):
+def _results_exist(run_id):
     """Check whether pronoun_probs.csv already exists for this run."""
-    check_path = f"{RESULTS_BASE}/{run_id}{tag}/pronoun_probs.csv"
+    check_path = f"{RESULTS_BASE}/{run_id}/pronoun_probs.csv"
     try:
         existing_keys = s3_utils.list_keys(check_path)
         return len(existing_keys) > 0
@@ -54,7 +54,6 @@ def _results_exist(run_id, tag):
 def run_experiments_finetuned_winogender(
     run_ids,
     dataset_path=None,
-    tag="_test",
     skip_existing=False,
 ):
     """Evaluate multiple fine-tuned Winogender models on the test dataset.
@@ -87,7 +86,7 @@ def run_experiments_finetuned_winogender(
         print(f"[{idx + 1}/{len(run_ids)}] Evaluating: {run_id}")
         print(f"{'=' * 60}")
 
-        if skip_existing and _results_exist(run_id, tag):
+        if skip_existing and _results_exist(run_id):
             print(f"  Results already exist. Skipping.")
             continue
 
@@ -112,10 +111,10 @@ def run_experiments_finetuned_winogender(
         os.remove(local_tmp)
         print("  Checkpoint loaded.")
 
-        ft_base = f"{RESULTS_BASE}/{run_id}{tag}"
+        ft_base = f"{RESULTS_BASE}/{run_id}"
         ft_pronoun_path = f"{ft_base}/pronoun_probs.csv"
         ft_suffix_path = f"{ft_base}/suffix_probs.csv"
-        ft_acc_path = f"{ft_base}/accumulated_impact_winogender.csv"
+        ft_acc_path = f"{ft_base}/accumulated_impact.csv"
 
         print("  Running paired tracing ...")
         paired_tracing(model, dataset, ft_pronoun_path, ft_suffix_path)
