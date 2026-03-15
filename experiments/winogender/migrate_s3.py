@@ -107,6 +107,18 @@ def build_migration_plan(client):
         if key != new_key:
             moves.append((key, new_key))
 
+    # --- Skip files already present at the destination ---
+    existing = set()
+    for dest_prefix in [NEW_BASELINE_TRAIN, NEW_BASELINE_TEST,
+                        NEW_FT_TRAIN, NEW_FT_TEST, NEW_FT_CHECKPOINTS]:
+        existing.update(_list_keys(client, dest_prefix + "/"))
+
+    total = len(moves)
+    moves = [(old, new) for old, new in moves if new not in existing]
+    skipped = total - len(moves)
+    if skipped:
+        print(f"Skipped {skipped} already-migrated file(s).")
+
     return moves
 
 
