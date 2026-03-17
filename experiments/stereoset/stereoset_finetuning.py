@@ -6,7 +6,7 @@ import tempfile
 import numpy as np
 import pandas as pd
 from copy import deepcopy
-from typing import List, Tuple, Dict, Optional, Any, Set
+from typing import List, Tuple, Dict, Optional, Any, Set, FrozenSet
 from dataclasses import dataclass, field
 from torch.utils.data import Dataset, DataLoader, random_split
 from torch import nn
@@ -190,6 +190,22 @@ def identify_mlp_from_attn(
     ]['ID'].unique().tolist()
 
     return mlp_series, target_ids
+
+
+def generate_random_heads(n_heads: int, n_layers: int = 48, heads_per_layer: int = 25, seed: int = 42) -> List[str]:
+    """Return n_heads randomly selected component names in '{layer}_Head_{idx}' format."""
+    rng = np.random.default_rng(seed)
+    all_heads = [f"{layer}_Head_{head}" for layer in range(n_layers) for head in range(heads_per_layer)]
+    chosen = rng.choice(all_heads, size=min(n_heads, len(all_heads)), replace=False)
+    return sorted(chosen.tolist())
+
+
+def generate_random_mlps(n_mlps: int, n_layers: int = 48, seed: int = 42) -> List[str]:
+    """Return n_mlps randomly selected component names in '{layer}_MLP' format."""
+    rng = np.random.default_rng(seed)
+    all_mlps = [f"{layer}_MLP" for layer in range(n_layers)]
+    chosen = rng.choice(all_mlps, size=min(n_mlps, len(all_mlps)), replace=False)
+    return sorted(chosen.tolist())
 
 
 def df_impact_analysis_selection(
@@ -1003,7 +1019,10 @@ def run_experiments(
     return experiment_results
 
 
-ALL_EXPERIMENT_TYPES = ['attn', 'mlp_from_attn', 'mlp_impact_only', 'full']
+DLA_EXPERIMENT_TYPES = ['attn', 'mlp_from_attn', 'mlp_impact_only', 'full']
+RANDOM_EXPERIMENT_TYPES = ['random_attn', 'random_mlp']
+ALL_EXPERIMENT_TYPES = DLA_EXPERIMENT_TYPES + RANDOM_EXPERIMENT_TYPES
+RANDOM_SEEDS = [42, 123, 456, 789, 1024]
 DEFAULT_PERCENTILES = [0.5, 0.8, 1.0, 5.0, 10.0]
 
 
@@ -1030,7 +1049,7 @@ def run_all_experiments(
     df_impact_analysis = df_impact_analysis_selection(df_impact, df_probability_info)
 
     all_results = {}
-    seen_active_params: Set[int] = set()
+    seen_configs: Set[Tuple[str, FrozenSet[str]]] = set()
 
     for exp_type in experiment_types:
         pcts = [100] if exp_type == 'full' else percentiles
@@ -1055,6 +1074,12 @@ def run_all_experiments(
             elif exp_type == 'mlp_impact_only':
                 top_mlps, target_ids = identify_top_mlp_impact(
                     df_impact, df_probability_info, df_impact_analysis, percentile)
+            elif exp_type == 'random_attn':
+                top_heads, target_ids = identify_top_impact_heads(
+                    df_impact, df_probability_info, df_impact_analysis, percentile)
+            elif exp_type == 'random_mlp':
+                top_mlps, target_ids = identify_top_mlp_impact(
+                    df_impact, df_probability_info, df_impact_analysis, percentile)
             elif exp_type == 'full':
                 target_ids = df_impact_analysis[
                     df_impact_analysis['Model_Preference'] == 'stereotype'
@@ -1064,148 +1089,162 @@ def run_all_experiments(
                 print("No target examples found. Skipping.")
                 continue
 
-            target_components = []
-            if exp_type == 'attn':
-                target_components = top_heads.index.tolist()
-            elif exp_type in ['mlp_impact_only', 'mlp_from_attn']:
-                target_components = top_mlps.index.tolist()
+            seeds = RANDOM_SEEDS if exp_type in ('random_attn', 'random_mlp') else [None]
 
-            model, num_params, hook_handles = configure_trainable_parameters(
-                model, target_components=target_components, condition=exp_type)
+            for rand_seed in seeds:
+                target_components = []
+                if exp_type == 'attn':
+                    target_components = top_heads.index.tolist()
+                elif exp_type in ['mlp_impact_only', 'mlp_from_attn']:
+                    target_components = top_mlps.index.tolist()
+                elif exp_type == 'random_attn':
+                    n_heads = len(top_heads)
+                    target_components = generate_random_heads(n_heads, seed=rand_seed)
+                elif exp_type == 'random_mlp':
+                    n_mlps = len(top_mlps)
+                    target_components = generate_random_mlps(n_mlps, seed=rand_seed)
 
-            if num_params in seen_active_params:
-                print(f"SKIP: {num_params:,} active parameters already tested. Skipping {exp_type} @ {percentile}%.")
+                condition = 'attn' if exp_type == 'random_attn' else (
+                    'mlp_impact_only' if exp_type == 'random_mlp' else exp_type)
+
+                model, num_params, hook_handles = configure_trainable_parameters(
+                    model, target_components=target_components, condition=condition)
+
+                config_key = (exp_type, frozenset(target_components))
+                if config_key in seen_configs:
+                    print(f"SKIP: identical component config already tested. Skipping {exp_type} @ {percentile}%.")
+                    for handle in hook_handles:
+                        handle.remove()
+                    hook_handles.clear()
+                    model.load_state_dict(original_state_dict)
+                    for param in model.parameters():
+                        param.requires_grad = True
+                    continue
+
+                seen_configs.add(config_key)
+
+                run_config = ExperimentConfig(
+                    loss_type=config.loss_type,
+                    dpo_beta=config.dpo_beta,
+                    ul_weight=config.ul_weight,
+                    learning_rate=config.learning_rate,
+                    batch_size=config.batch_size,
+                    num_epochs=config.num_epochs,
+                    patience=config.patience,
+                    max_token_length=config.max_token_length,
+                    fine_tune_dataset=config.fine_tune_dataset,
+                    dpo_dataset=config.dpo_dataset,
+                    s3_bucket=config.s3_bucket,
+                    s3_prefix=config.s3_prefix,
+                    checkpoint_dir=config.checkpoint_dir,
+                    results_dir=config.results_dir,
+                    percentiles=[percentile],
+                    experiment_type=exp_type,
+                    bias_type=config.bias_type,
+                )
+
+                optimizer = torch.optim.AdamW(
+                    filter(lambda p: p.requires_grad, model.parameters()),
+                    lr=config.learning_rate, weight_decay=0.0)
+
+                ref_model = HookedTransformer.from_pretrained("gpt2-xl")
+                for param in ref_model.parameters():
+                    param.requires_grad = False
+
+                seed_suffix = f"_seed{rand_seed}" if rand_seed is not None else ""
+                if config.loss_type == "dpo":
+                    run_id = f"dpo_{exp_type}_{percentile}_beta{config.dpo_beta}_lr{config.learning_rate}{seed_suffix}"
+                else:
+                    run_id = f"sft_{exp_type}_{percentile}_ul{config.ul_weight}_lr{config.learning_rate}{seed_suffix}"
+
+                if config.loss_type == "dpo":
+                    dataset = DPODataset(
+                        config.dpo_dataset, tokenizer,
+                        target_ids=[str(i) for i in target_ids],
+                        max_length=config.max_token_length)
+
+                    if len(dataset) == 0:
+                        print("DPO dataset is empty after filtering. Skipping.")
+                        for handle in hook_handles:
+                            handle.remove()
+                        hook_handles.clear()
+                        model.load_state_dict(original_state_dict)
+                        for param in model.parameters():
+                            param.requires_grad = True
+                        continue
+
+                    train_size = int(0.8 * len(dataset))
+                    val_size = len(dataset) - train_size
+                    train_set, val_set = random_split(
+                        dataset, [train_size, val_size],
+                        generator=torch.Generator().manual_seed(42))
+
+                    train_loader = DataLoader(train_set, batch_size=config.batch_size, shuffle=True)
+                    val_loader = DataLoader(val_set, batch_size=config.batch_size, shuffle=False)
+
+                    result = run_training_dpo(
+                        model, ref_model, train_loader, val_loader, optimizer,
+                        run_config, run_id=run_id, num_params=num_params)
+
+                elif config.loss_type == "sft_improved":
+                    sft_dataset = ImprovedSFTDataset(
+                        config.fine_tune_dataset, tokenizer,
+                        target_ids=[str(i) for i in target_ids],
+                        max_length=config.max_token_length)
+
+                    if len(sft_dataset) == 0:
+                        print("SFT dataset is empty after filtering. Skipping.")
+                        for handle in hook_handles:
+                            handle.remove()
+                        hook_handles.clear()
+                        model.load_state_dict(original_state_dict)
+                        for param in model.parameters():
+                            param.requires_grad = True
+                        continue
+
+                    train_size = int(0.8 * len(sft_dataset))
+                    val_size = len(sft_dataset) - train_size
+                    train_set, val_set = random_split(
+                        sft_dataset, [train_size, val_size],
+                        generator=torch.Generator().manual_seed(42))
+
+                    train_loader = DataLoader(train_set, batch_size=config.batch_size, shuffle=True)
+                    val_loader = DataLoader(val_set, batch_size=config.batch_size, shuffle=False)
+
+                    dpo_val_dataset = DPODataset(
+                        config.dpo_dataset, tokenizer,
+                        target_ids=[str(i) for i in target_ids],
+                        max_length=config.max_token_length)
+                    val_dpo_loader = None
+                    if len(dpo_val_dataset) > 0:
+                        _, dpo_val_set = random_split(
+                            dpo_val_dataset,
+                            [int(0.8 * len(dpo_val_dataset)),
+                             len(dpo_val_dataset) - int(0.8 * len(dpo_val_dataset))],
+                            generator=torch.Generator().manual_seed(42))
+                        val_dpo_loader = DataLoader(
+                            dpo_val_set, batch_size=config.batch_size, shuffle=False)
+
+                    result = run_training_sft_improved(
+                        model, ref_model, train_loader, val_loader, val_dpo_loader,
+                        optimizer, run_config, run_id=run_id, num_params=num_params)
+
+                else:
+                    raise ValueError(f"Unknown loss_type: {config.loss_type}")
+
+                all_results[(exp_type, percentile, rand_seed)] = result
+
+                print("Cleaning up hooks and resetting weights...")
                 for handle in hook_handles:
                     handle.remove()
                 hook_handles.clear()
+
                 model.load_state_dict(original_state_dict)
                 for param in model.parameters():
                     param.requires_grad = True
-                continue
-
-            seen_active_params.add(num_params)
-
-            run_config = ExperimentConfig(
-                loss_type=config.loss_type,
-                dpo_beta=config.dpo_beta,
-                ul_weight=config.ul_weight,
-                learning_rate=config.learning_rate,
-                batch_size=config.batch_size,
-                num_epochs=config.num_epochs,
-                patience=config.patience,
-                max_token_length=config.max_token_length,
-                fine_tune_dataset=config.fine_tune_dataset,
-                dpo_dataset=config.dpo_dataset,
-                s3_bucket=config.s3_bucket,
-                s3_prefix=config.s3_prefix,
-                checkpoint_dir=config.checkpoint_dir,
-                results_dir=config.results_dir,
-                percentiles=[percentile],
-                experiment_type=exp_type,
-                bias_type=config.bias_type,
-            )
-
-            optimizer = torch.optim.AdamW(
-                filter(lambda p: p.requires_grad, model.parameters()),
-                lr=config.learning_rate, weight_decay=0.0)
-
-            ref_model = HookedTransformer.from_pretrained("gpt2-xl")
-            for param in ref_model.parameters():
-                param.requires_grad = False
-
-            if config.loss_type == "dpo":
-                run_id = f"dpo_{exp_type}_{percentile}_beta{config.dpo_beta}_lr{config.learning_rate}"
-            else:
-                run_id = f"sft_{exp_type}_{percentile}_ul{config.ul_weight}_lr{config.learning_rate}"
-
-            if config.loss_type == "dpo":
-                dataset = DPODataset(
-                    config.dpo_dataset, tokenizer,
-                    target_ids=[str(i) for i in target_ids],
-                    max_length=config.max_token_length)
-
-                if len(dataset) == 0:
-                    print("DPO dataset is empty after filtering. Skipping.")
-                    for handle in hook_handles:
-                        handle.remove()
-                    hook_handles.clear()
-                    model.load_state_dict(original_state_dict)
-                    for param in model.parameters():
-                        param.requires_grad = True
-                    continue
-
-                train_size = int(0.8 * len(dataset))
-                val_size = len(dataset) - train_size
-                train_set, val_set = random_split(
-                    dataset, [train_size, val_size],
-                    generator=torch.Generator().manual_seed(42))
-
-                train_loader = DataLoader(train_set, batch_size=config.batch_size, shuffle=True)
-                val_loader = DataLoader(val_set, batch_size=config.batch_size, shuffle=False)
-
-                result = run_training_dpo(
-                    model, ref_model, train_loader, val_loader, optimizer,
-                    run_config, run_id=run_id, num_params=num_params)
-
-            elif config.loss_type == "sft_improved":
-                sft_dataset = ImprovedSFTDataset(
-                    config.fine_tune_dataset, tokenizer,
-                    target_ids=[str(i) for i in target_ids],
-                    max_length=config.max_token_length)
-
-                if len(sft_dataset) == 0:
-                    print("SFT dataset is empty after filtering. Skipping.")
-                    for handle in hook_handles:
-                        handle.remove()
-                    hook_handles.clear()
-                    model.load_state_dict(original_state_dict)
-                    for param in model.parameters():
-                        param.requires_grad = True
-                    continue
-
-                train_size = int(0.8 * len(sft_dataset))
-                val_size = len(sft_dataset) - train_size
-                train_set, val_set = random_split(
-                    sft_dataset, [train_size, val_size],
-                    generator=torch.Generator().manual_seed(42))
-
-                train_loader = DataLoader(train_set, batch_size=config.batch_size, shuffle=True)
-                val_loader = DataLoader(val_set, batch_size=config.batch_size, shuffle=False)
-
-                dpo_val_dataset = DPODataset(
-                    config.dpo_dataset, tokenizer,
-                    target_ids=[str(i) for i in target_ids],
-                    max_length=config.max_token_length)
-                val_dpo_loader = None
-                if len(dpo_val_dataset) > 0:
-                    _, dpo_val_set = random_split(
-                        dpo_val_dataset,
-                        [int(0.8 * len(dpo_val_dataset)),
-                         len(dpo_val_dataset) - int(0.8 * len(dpo_val_dataset))],
-                        generator=torch.Generator().manual_seed(42))
-                    val_dpo_loader = DataLoader(
-                        dpo_val_set, batch_size=config.batch_size, shuffle=False)
-
-                result = run_training_sft_improved(
-                    model, ref_model, train_loader, val_loader, val_dpo_loader,
-                    optimizer, run_config, run_id=run_id, num_params=num_params)
-
-            else:
-                raise ValueError(f"Unknown loss_type: {config.loss_type}")
-
-            all_results[(exp_type, percentile)] = result
-
-            print("Cleaning up hooks and resetting weights...")
-            for handle in hook_handles:
-                handle.remove()
-            hook_handles.clear()
-
-            model.load_state_dict(original_state_dict)
-            for param in model.parameters():
-                param.requires_grad = True
 
     summary_path = f"{config.results_dir}/all_experiment_results.json"
-    serializable = {f"{k[0]}_{k[1]}": v for k, v in all_results.items()}
+    serializable = {f"{k[0]}_{k[1]}_s{k[2]}": v for k, v in all_results.items()}
     s3_utils.write_json(serializable, summary_path)
     print(f"\nSaved summary of all experiments to s3 ({summary_path})")
 
@@ -1223,9 +1262,9 @@ if __name__ == "__main__":
 
     for beta in [0.3, 0.5]:
         for lr in ALL_LRS:
-            exp_types = [t for t in ALL_EXPERIMENT_TYPES if t != 'full']
+            exp_types = [t for t in DLA_EXPERIMENT_TYPES if t != 'full']
             if lr in FULL_LRS:
-                exp_types = ALL_EXPERIMENT_TYPES
+                exp_types = DLA_EXPERIMENT_TYPES
             print(f"\n{'#'*60}\n# DPO: beta={beta}, lr={lr}\n{'#'*60}")
             config_dpo = ExperimentConfig(loss_type="dpo", dpo_beta=beta, learning_rate=lr)
             run_all_experiments(model, tokenizer, df_impact, df_probs, config_dpo,
@@ -1233,9 +1272,9 @@ if __name__ == "__main__":
 
     for ul_w in [0.5, 1.0]:
         for lr in ALL_LRS:
-            exp_types = [t for t in ALL_EXPERIMENT_TYPES if t != 'full']
+            exp_types = [t for t in DLA_EXPERIMENT_TYPES if t != 'full']
             if lr in FULL_LRS:
-                exp_types = ALL_EXPERIMENT_TYPES
+                exp_types = DLA_EXPERIMENT_TYPES
             print(f"\n{'#'*60}\n# SFT: ul_weight={ul_w}, lr={lr}\n{'#'*60}")
             config_sft = ExperimentConfig(loss_type="sft_improved", ul_weight=ul_w, learning_rate=lr)
             run_all_experiments(model, tokenizer, df_impact, df_probs, config_sft,
