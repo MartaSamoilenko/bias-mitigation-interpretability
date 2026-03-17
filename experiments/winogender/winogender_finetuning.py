@@ -6,7 +6,7 @@ gender direction + BLS occupation statistics.
 """
 import os
 from copy import deepcopy
-from typing import List, Set
+from typing import FrozenSet, List, Set, Tuple
 
 import pandas as pd
 import torch
@@ -140,7 +140,7 @@ def run_all_experiments_winogender(
     )
 
     all_results = {}
-    seen_active_params: Set[int] = set()
+    seen_configs: Set[Tuple[str, FrozenSet[str]]] = set()
 
     for exp_type in experiment_types:
         pcts = [100] if exp_type == "full" else percentiles
@@ -185,13 +185,14 @@ def run_all_experiments_winogender(
             model, num_params, hook_handles = configure_trainable_parameters(
                 model, target_components=target_components, condition=exp_type)
 
-            if num_params in seen_active_params:
-                print(f"SKIP: {num_params:,} active params already tested. "
+            config_key = (exp_type, frozenset(target_components))
+            if config_key in seen_configs:
+                print(f"SKIP: identical component config already tested. "
                       f"Skipping {exp_type} @ {percentile}%.")
                 _cleanup(model, hook_handles, original_state_dict)
                 continue
 
-            seen_active_params.add(num_params)
+            seen_configs.add(config_key)
 
             run_config = ExperimentConfig(
                 loss_type=config.loss_type,
