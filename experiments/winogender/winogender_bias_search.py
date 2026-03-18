@@ -15,7 +15,7 @@ import torch
 from dotenv import load_dotenv
 from transformer_lens import HookedTransformer
 
-from experiments import s3_utils
+import s3_utils
 
 load_dotenv()
 
