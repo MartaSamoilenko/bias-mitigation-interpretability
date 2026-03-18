@@ -722,9 +722,6 @@ def run_training_dpo(
     return result_dict
 
 
-
-# Improved SFT Training (CE + Unlikelihood)
-
 def run_training_sft_improved(
     model: HookedTransformer,
     ref_model: HookedTransformer,
@@ -1021,7 +1018,7 @@ def run_experiments(
 
 DLA_EXPERIMENT_TYPES = ['attn', 'mlp_from_attn', 'mlp_impact_only', 'full']
 RANDOM_EXPERIMENT_TYPES = ['random_attn', 'random_mlp']
-ALL_EXPERIMENT_TYPES = DLA_EXPERIMENT_TYPES + RANDOM_EXPERIMENT_TYPES
+ALL_EXPERIMENT_TYPES = RANDOM_EXPERIMENT_TYPES
 RANDOM_SEEDS = [42]
 DEFAULT_PERCENTILES = [0.5, 0.8, 1.0, 5.0, 10.0]
 
