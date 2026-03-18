@@ -1022,7 +1022,7 @@ def run_experiments(
 DLA_EXPERIMENT_TYPES = ['attn', 'mlp_from_attn', 'mlp_impact_only', 'full']
 RANDOM_EXPERIMENT_TYPES = ['random_attn', 'random_mlp']
 ALL_EXPERIMENT_TYPES = DLA_EXPERIMENT_TYPES + RANDOM_EXPERIMENT_TYPES
-RANDOM_SEEDS = [42, 123, 456, 789, 1024]
+RANDOM_SEEDS = [42]
 DEFAULT_PERCENTILES = [0.5, 0.8, 1.0, 5.0, 10.0]
 
 
