@@ -27,6 +27,7 @@ safetensors>=0.4.0
 # Utilities
 python-dotenv>=1.0.0
 tqdm>=4.66.0
+psutil>=5.9.0
 
 # lm-evaluation-harness — install from local clone:
 #   pip install -e ./lm-evaluation-harness

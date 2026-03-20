@@ -1,7 +1,9 @@
 import os
 import json
+import time
 import boto3
 import torch
+import psutil
 import tempfile
 import numpy as np
 import pandas as pd
@@ -576,6 +578,17 @@ def dpo_loss(policy_chosen_logps, policy_rejected_logps,
     return losses.mean()
 
 
+def _collect_memory_stats():
+    if torch.cuda.is_available():
+        vram_allocated = round(torch.cuda.max_memory_allocated() / (1024 ** 2), 2)
+        vram_reserved = round(torch.cuda.max_memory_reserved() / (1024 ** 2), 2)
+    else:
+        vram_allocated = None
+        vram_reserved = None
+    ram_rss = round(psutil.Process(os.getpid()).memory_info().rss / (1024 ** 2), 2)
+    return vram_allocated, vram_reserved, ram_rss
+
+
 def run_training_dpo(
     model: HookedTransformer,
     ref_model: HookedTransformer,
@@ -600,9 +613,13 @@ def run_training_dpo(
     total_params = sum(p.numel() for p in model.parameters())
 
     print(f"Starting DPO training run: {run_id} (beta={config.dpo_beta})")
+    run_start = time.perf_counter()
 
     for epoch in range(config.num_epochs):
         model.train()
+        epoch_start = time.perf_counter()
+        if torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats()
         total_train_loss = 0.0
 
         for batch in train_loader:
@@ -675,11 +692,18 @@ def run_training_dpo(
         avg_val_loss = total_val_loss / len(val_loader)
         pref_acc = compute_preference_accuracy(model, val_loader, ref_model, device)
 
+        epoch_time = round(time.perf_counter() - epoch_start, 2)
+        vram_alloc, vram_resv, ram_rss = _collect_memory_stats()
+
         epoch_logs.append({
             "epoch": epoch + 1,
             "train_loss": round(avg_train_loss, 6),
             "val_loss": round(avg_val_loss, 6),
             "pref_acc": round(pref_acc, 6),
+            "epoch_time_sec": epoch_time,
+            "peak_vram_allocated_mb": vram_alloc,
+            "peak_vram_reserved_mb": vram_resv,
+            "ram_rss_mb": ram_rss,
         })
 
         print(f"Epoch {epoch+1} | Train Loss: {avg_train_loss:.4f} | "
@@ -712,6 +736,9 @@ def run_training_dpo(
         "best_epoch": best_epoch,
         "total_epochs": len(epoch_logs),
         "best_val_loss": round(best_val_loss, 6),
+        "total_training_time_sec": round(time.perf_counter() - run_start, 2),
+        "peak_vram_allocated_mb": max((e["peak_vram_allocated_mb"] for e in epoch_logs if e["peak_vram_allocated_mb"] is not None), default=None),
+        "peak_vram_reserved_mb": max((e["peak_vram_reserved_mb"] for e in epoch_logs if e["peak_vram_reserved_mb"] is not None), default=None),
         "epochs": epoch_logs,
     }
 
@@ -752,9 +779,13 @@ def run_training_sft_improved(
     total_params = sum(p.numel() for p in model.parameters())
 
     print(f"Starting improved SFT training run: {run_id} (ul_weight={config.ul_weight})")
+    run_start = time.perf_counter()
 
     for epoch in range(config.num_epochs):
         model.train()
+        epoch_start = time.perf_counter()
+        if torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats()
         total_train_loss = 0.0
         total_ce_loss = 0.0
         total_ul_loss = 0.0
@@ -825,6 +856,9 @@ def run_training_sft_improved(
         if val_dpo_loader is not None:
             pref_acc = compute_preference_accuracy(model, val_dpo_loader, ref_model, device)
 
+        epoch_time = round(time.perf_counter() - epoch_start, 2)
+        vram_alloc, vram_resv, ram_rss = _collect_memory_stats()
+
         epoch_logs.append({
             "epoch": epoch + 1,
             "train_loss": round(avg_train_loss, 6),
@@ -832,6 +866,10 @@ def run_training_sft_improved(
             "ul_loss": round(avg_ul_loss, 6),
             "val_loss": round(avg_val_loss, 6),
             "pref_acc": round(pref_acc, 6),
+            "epoch_time_sec": epoch_time,
+            "peak_vram_allocated_mb": vram_alloc,
+            "peak_vram_reserved_mb": vram_resv,
+            "ram_rss_mb": ram_rss,
         })
 
         print(f"Epoch {epoch+1} | Train: {avg_train_loss:.4f} (CE: {avg_ce_loss:.4f}, "
@@ -864,6 +902,9 @@ def run_training_sft_improved(
         "best_epoch": best_epoch,
         "total_epochs": len(epoch_logs),
         "best_val_loss": round(best_val_loss, 6),
+        "total_training_time_sec": round(time.perf_counter() - run_start, 2),
+        "peak_vram_allocated_mb": max((e["peak_vram_allocated_mb"] for e in epoch_logs if e["peak_vram_allocated_mb"] is not None), default=None),
+        "peak_vram_reserved_mb": max((e["peak_vram_reserved_mb"] for e in epoch_logs if e["peak_vram_reserved_mb"] is not None), default=None),
         "epochs": epoch_logs,
     }
 
