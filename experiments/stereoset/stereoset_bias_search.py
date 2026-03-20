@@ -14,14 +14,8 @@ model = HookedTransformer.from_pretrained("gpt2-xl")
 
 model.eval()
 
-# rephrased_stereoset = json.load(open('data/stereoset/rephrased_stereoset.json'))
-# print(f"Loaded {len(rephrased_stereoset)} examples.")
-#
-# rephrased_stereoset_synonyms = json.load(open('data/stereoset/rephrased_stereoset_synonyms.json'))
-# print(f"Loaded {len(rephrased_stereoset)} examples.")
-
 try:
-    rephrased_stereoset = s3_utils.read_json('data/stereoset/gender_new_test_stereoset.json')
+    rephrased_stereoset = s3_utils.read_json('data/stereoset/gender_test_rephrased.json')
     raw_data = s3_utils.read_json('data/stereoset/test.json')
 except Exception as e:
     print(f"Error loading data from S3: {e}")
@@ -234,19 +228,19 @@ if __name__ == "__main__":
         exit(0)
 
     if TRACING:
-        test_file_path = "data/stereoset/splits/gender_test.json"
+        test_file_path = "data/stereoset/gender_test_rephrased.json"
         print(f"Loading testing data from S3 ({test_file_path})...")
         test_data = s3_utils.read_json(test_file_path)
         print(f"Loaded {len(test_data)} testing examples.")
 
         print("Starting Tracing on Testing Data...")
-        all_data = layer_tracing(test_data, "out_DLA_gender_test.csv")
+        all_data = layer_tracing(test_data, "out_DLA_gender_baseline_test_v2.csv")
         print("Tracing Complete.")
 
     if ACC_ANALYSIS:
         print("Starting Accumulation Analysis...")
-        filename = "outputs/gpt2-xl/dev_tests/out_DLA_gender_test.csv"
-        output_filename = "outputs/gpt2-xl/dev_tests/accumulated_impact_gender_test.csv"
+        filename = "outputs/gpt2-xl/dev_tests/out_DLA_gender_test_v2.csv"
+        output_filename = "outputs/gpt2-xl/dev_tests/accumulated_impact_gender_baseline_test_v2.csv"
 
         try:
             result_df = accumulative_layer_impact(filename)
