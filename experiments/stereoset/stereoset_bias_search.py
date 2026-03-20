@@ -6,11 +6,14 @@ from huggingface_hub import login
 import os
 import random
 
-from experiments import s3_utils
+import s3_utils
 
 login(token=os.environ["HF_TOKEN"])
 
 model = HookedTransformer.from_pretrained("gpt2-xl")
+device = "cuda" if torch.cuda.is_available() else "cpu"
+
+print(f"Device : {device}")
 
 model.eval()
 
@@ -146,16 +149,20 @@ def layer_tracing(dataset,
             target_tokens = model.tokenizer.encode(word_with_space)
 
             current_prompt = original_prompt
-            layer_accumulated_probs = torch.ones(model.cfg.n_layers, device='cpu')
+            layer_accumulated_probs = torch.ones(model.cfg.n_layers, device=device)
+
+            # print(current_prompt)
 
             for token_pos, token_id in enumerate(target_tokens):
                 with torch.no_grad():
                     _, cache = model.run_with_cache(current_prompt)
 
                 for layer in range(model.cfg.n_layers):
-                    hidden_state = cache[f"blocks.{layer}.hook_resid_post"][0, -1]
+                    hidden_state = cache[f"blocks.{layer}.hook_resid_post"][0:1, -1:]
                     normalized_resid = model.ln_final(hidden_state)
-                    layer_logits = model.unembed(normalized_resid)
+                    layer_logits_3d = model.unembed(normalized_resid)
+
+                    layer_logits = layer_logits_3d[0, 0]
                     layer_probs = torch.softmax(layer_logits, dim=-1)
                     p_token = layer_probs[token_id].item()
 
@@ -239,7 +246,7 @@ if __name__ == "__main__":
 
     if ACC_ANALYSIS:
         print("Starting Accumulation Analysis...")
-        filename = "outputs/gpt2-xl/dev_tests/out_DLA_gender_test_v2.csv"
+        filename = "outputs/gpt2-xl/dev_tests/out_DLA_gender_baseline_test_v2.csv"
         output_filename = "outputs/gpt2-xl/dev_tests/accumulated_impact_gender_baseline_test_v2.csv"
 
         try:

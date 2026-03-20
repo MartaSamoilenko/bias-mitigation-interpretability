@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 
 
 
-from experiments import s3_utils
+import s3_utils
 
 # try:
 from transformer_lens import HookedTransformer
@@ -29,13 +29,13 @@ class ExperimentConfig:
     # Dataset paths
     fine_tune_dataset: str = "data/stereoset/fine-tune-sft/sft_bias_mitigation_v2.jsonl"
     dpo_dataset: str = "data/stereoset/fine-tune-dpo/dpo_pairs_triplet.jsonl"
-    train_file_path: str = "data/stereoset/splits/gender_train.json"
+    train_file_path: str = "data/stereoset/gender_test_rephrased.json"
 
     # Infrastructure
     s3_bucket: str = "modelsfinetuned"
     s3_prefix: str = "gpt2-xl-finetuned"
     checkpoint_dir: str = "../checkpoints"
-    results_dir: str = "outputs/gpt2-xl/fine_tuned/logs"
+    results_dir: str = "outputs/gpt2-xl/fine_tuned_v2/logs"
 
     # Training hyperparameters
     batch_size: int = 4
@@ -965,7 +965,7 @@ def run_experiments(
         elif config.loss_type == "sft_improved":
             sft_dataset = ImprovedSFTDataset(
                 config.fine_tune_dataset, tokenizer,
-                target_ids=[str(i) for i in target_ids],
+                target_ids=None,
                 max_length=config.max_token_length)
 
             if len(sft_dataset) == 0:
@@ -1272,8 +1272,8 @@ if __name__ == "__main__":
     tokenizer = model.tokenizer
 
     print("Loading StereoSet DLA data from S3 ...")
-    df_impact = s3_utils.read_csv("outputs/gpt2-xl/dev_tests/accumulated_impact_gender_train.csv")
-    df_probs = s3_utils.read_csv("outputs/gpt2-xl/dev_tests/out_DLA_gender_train.csv")
+    df_impact = s3_utils.read_csv("outputs/gpt2-xl/dev_tests/accumulated_impact_gender_baseline_test_v2.csv")
+    df_probs = s3_utils.read_csv("outputs/gpt2-xl/dev_tests/out_DLA_gender_baseline_test_v2.csv")
 
     ALL_LRS = [1e-5, 5e-6, 1e-6]
     FULL_LRS = [5e-6, 1e-6]
