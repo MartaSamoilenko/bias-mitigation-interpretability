@@ -35,9 +35,9 @@ class ExperimentConfig:
 
     # Infrastructure
     s3_bucket: str = "modelsfinetuned"
-    s3_prefix: str = "gpt2-xl-finetuned"
+    s3_prefix: str = "stereoset/outputs/gpt2-xl/checkpoints_v2"
     checkpoint_dir: str = "../checkpoints"
-    results_dir: str = "outputs/gpt2-xl/fine_tuned_v2/logs"
+    results_dir: str = "stereoset/outputs/gpt2-xl/fine_tuned_v2/logs"
 
     # Training hyperparameters
     batch_size: int = 4
