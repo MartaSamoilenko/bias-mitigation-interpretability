@@ -146,7 +146,7 @@ def layer_tracing(dataset,
 
         for stereotype_key, word in candidates.items():
             word_with_space = ' ' + word
-            target_tokens = model.tokenizer.encode(word_with_space)
+            target_tokens = model.tokenizer.encode(word_with_space, add_special_tokens=False)
 
             current_prompt = original_prompt
             layer_accumulated_probs = torch.ones(model.cfg.n_layers, device=device)

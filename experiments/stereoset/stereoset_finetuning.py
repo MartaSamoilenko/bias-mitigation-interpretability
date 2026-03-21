@@ -270,7 +270,7 @@ def _tokenize_pair(tokenizer, prompt: str, completion: str, max_length: int):
     )
     encoded_prompt = tokenizer(
         prompt, truncation=True, max_length=max_length,
-        add_special_tokens=False, return_tensors="pt"
+        return_tensors="pt", add_special_tokens=True
     )
     return (
         encoded_full["input_ids"].squeeze(0),
@@ -457,6 +457,9 @@ def configure_trainable_parameters(
     total_params = 0
     hook_handles = []
     n_heads = model.cfg.n_heads
+    n_kv_heads = getattr(model.cfg, 'n_key_value_heads', None) or n_heads
+    is_gqa = n_kv_heads != n_heads
+    shared_kv_params = 0
 
     for name, param in model.named_parameters():
         total_params += param.numel()
@@ -478,6 +481,10 @@ def configure_trainable_parameters(
                 hook_handles.append(handle)
                 params_per_head = param.numel() // n_heads
                 active_params_count += params_per_head * len(active_heads)
+            elif is_gqa and param.shape[0] == n_kv_heads:
+                param.requires_grad = True
+                active_params_count += param.numel()
+                shared_kv_params += param.numel()
 
         elif condition in ['mlp_impact_only', 'mlp_probability_only', 'mlp_from_attn'] and layer_idx in mlp_targets and "mlp" in name:
             param.requires_grad = True
@@ -486,6 +493,8 @@ def configure_trainable_parameters(
     print(f"\n--- Unfreezing Summary ({condition}) ---")
     if condition == 'attn':
         print(f"Targeted Layers (Attn): {list(attn_head_targets_by_layer)}")
+        if is_gqa:
+            print(f"GQA detected (n_kv_heads={n_kv_heads}): shared K/V params unfrozen: {shared_kv_params:,}")
     elif condition in ['mlp_impact_only', 'mlp_probability_only', 'mlp_from_attn']:
         print(f"Targeted Layers (MLP): {list(mlp_targets)}")
     if condition == 'full':
