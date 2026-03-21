@@ -35,9 +35,9 @@ class ExperimentConfig:
 
     # Infrastructure
     s3_bucket: str = "modelsfinetuned"
-    s3_prefix: str = "stereoset/outputs/gpt2-xl/checkpoints_v2"
+    s3_prefix: str = "stereoset/outputs/gemma-2b/checkpoints_v2"
     checkpoint_dir: str = "../checkpoints"
-    results_dir: str = "stereoset/outputs/gpt2-xl/fine_tuned_v2/logs"
+    results_dir: str = "stereoset/outputs/gemma-2b/fine_tuned_v2/logs"
 
     # Training hyperparameters
     batch_size: int = 4
@@ -970,7 +970,7 @@ def run_experiments(
             filter(lambda p: p.requires_grad, model.parameters()),
             lr=config.learning_rate, weight_decay=0.0)
 
-        ref_model = HookedTransformer.from_pretrained("gpt2-xl")
+        ref_model = HookedTransformer.from_pretrained("google/gemma-2b")
         for param in ref_model.parameters():
             param.requires_grad = False
 
@@ -1185,7 +1185,7 @@ def run_all_experiments(
                     filter(lambda p: p.requires_grad, model.parameters()),
                     lr=config.learning_rate, weight_decay=0.0)
 
-                ref_model = HookedTransformer.from_pretrained("gpt2-xl")
+                ref_model = HookedTransformer.from_pretrained("google/gemma-2b")
                 for param in ref_model.parameters():
                     param.requires_grad = False
 
@@ -1298,9 +1298,15 @@ if __name__ == "__main__":
         help="dla = full DLA hyper-param sweep (default); "
              "random = random-layer ablation for top-5 configs; "
              "all = DLA then random.")
+    parser.add_argument(
+        "--experiments", choices=["all", "top5"], default="all",
+        help="all = run all experiments with hyperparameters "
+             "top5 = run only top 5 experiments "
+             )
     args = parser.parse_args()
 
     TOP_5_CONFIGS = [
+        {"percentile": 0.5, "dpo_beta": 0.3, "learning_rate": 1e-5},
         {"percentile": 0.8, "dpo_beta": 0.3, "learning_rate": 1e-5},
         {"percentile": 1.0, "dpo_beta": 0.3, "learning_rate": 1e-5},
         {"percentile": 5.0, "dpo_beta": 0.3, "learning_rate": 1e-5},
@@ -1308,38 +1314,58 @@ if __name__ == "__main__":
         {"percentile": 5.0, "dpo_beta": 0.3, "learning_rate": 5e-6},
     ]
 
-    print("Loading GPT-2 XL ...")
-    model = HookedTransformer.from_pretrained("gpt2-xl")
+    print("Loading google/gemma-2b ...")
+    model = HookedTransformer.from_pretrained("google/gemma-2b")
     tokenizer = model.tokenizer
 
     print("Loading StereoSet DLA data from S3 ...")
-    df_impact = s3_utils.read_csv("outputs/gpt2-xl/dev_tests/accumulated_impact_gender_baseline_test_v2.csv")
-    df_probs = s3_utils.read_csv("outputs/gpt2-xl/dev_tests/out_DLA_gender_baseline_test_v2.csv")
+    df_impact = s3_utils.read_csv("outputs/gemma-2b/dev_tests/accumulated_impact_gender_baseline_test_v2.csv")
+    df_probs = s3_utils.read_csv("outputs/gemma-2b/dev_tests/out_DLA_gender_baseline_test_v2.csv")
 
     ALL_LRS = [1e-5, 5e-6, 1e-6]
     FULL_LRS = [5e-6, 1e-6]
 
     def run_dla_sweep():
-        for beta in [0.3, 0.5]:
-            for lr in ALL_LRS:
-                exp_types = [t for t in DLA_EXPERIMENT_TYPES if t != 'full']
-                if lr in FULL_LRS:
-                    exp_types = DLA_EXPERIMENT_TYPES
-                print(f"\n{'#'*60}\n# DPO: beta={beta}, lr={lr}\n{'#'*60}")
-                config_dpo = ExperimentConfig(loss_type="dpo", dpo_beta=beta, learning_rate=lr)
-                run_all_experiments(model, tokenizer, df_impact, df_probs, config_dpo,
-                                    experiment_types=exp_types)
+        if args.experiments in ("all"):
+            for beta in [0.3, 0.5]:
+                for lr in ALL_LRS:
+                    exp_types = [t for t in DLA_EXPERIMENT_TYPES if t != 'full']
+                    if lr in FULL_LRS:
+                        exp_types = DLA_EXPERIMENT_TYPES
+                    print(f"\n{'#'*60}\n# DPO: beta={beta}, lr={lr}\n{'#'*60}")
+                    config_dpo = ExperimentConfig(loss_type="dpo", dpo_beta=beta, learning_rate=lr)
+                    run_all_experiments(model, tokenizer, df_impact, df_probs, config_dpo,
+                                        experiment_types=exp_types)
 
-        for ul_w in [0.5, 1.0]:
-            for lr in ALL_LRS:
+            for ul_w in [0.5, 1.0]:
+                for lr in ALL_LRS:
+                    exp_types = [t for t in DLA_EXPERIMENT_TYPES if t != 'full']
+                    if lr in FULL_LRS:
+                        exp_types = DLA_EXPERIMENT_TYPES
+                    print(f"\n{'#'*60}\n# SFT: ul_weight={ul_w}, lr={lr}\n{'#'*60}")
+                    config_sft = ExperimentConfig(loss_type="sft_improved", ul_weight=ul_w, learning_rate=lr)
+                    run_all_experiments(model, tokenizer, df_impact, df_probs, config_sft,
+                                        experiment_types=exp_types)
+        elif args.experiments in ("top5"):
+            for i, cfg in enumerate(TOP_5_CONFIGS, 1):
                 exp_types = [t for t in DLA_EXPERIMENT_TYPES if t != 'full']
-                if lr in FULL_LRS:
-                    exp_types = DLA_EXPERIMENT_TYPES
-                print(f"\n{'#'*60}\n# SFT: ul_weight={ul_w}, lr={lr}\n{'#'*60}")
-                config_sft = ExperimentConfig(loss_type="sft_improved", ul_weight=ul_w, learning_rate=lr)
-                run_all_experiments(model, tokenizer, df_impact, df_probs, config_sft,
-                                    experiment_types=exp_types)
 
+                print(f"\n{'#'*60}")
+                print(f"# Experiment {i}/{len(TOP_5_CONFIGS)}: "
+                    f"percentile={cfg['percentile']}, "
+                    f"beta={cfg['dpo_beta']}, lr={cfg['learning_rate']}")
+                print(f"{'#'*60}")
+
+                config = ExperimentConfig(
+                    loss_type="dpo",
+                    dpo_beta=cfg["dpo_beta"],
+                    learning_rate=cfg["learning_rate"],
+                )
+                run_all_experiments(
+                    model, tokenizer, df_impact, df_probs, config,
+                    experiment_types=exp_types,
+                    percentiles=[cfg["percentile"]],
+                )
     def run_random_ablation():
         for i, cfg in enumerate(TOP_5_CONFIGS, 1):
             print(f"\n{'#'*60}")

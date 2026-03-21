@@ -10,7 +10,7 @@ import s3_utils
 
 login(token=os.environ["HF_TOKEN"])
 
-model = HookedTransformer.from_pretrained("gpt2-xl")
+model = HookedTransformer.from_pretrained("google/gemma-2b")
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 print(f"Device : {device}")
@@ -112,7 +112,7 @@ def accumulative_layer_impact(filename):
 def layer_tracing(dataset,
                   output_filename):
 
-    output_path = f"outputs/gpt2-xl/dev_tests/{output_filename}"
+    output_path = f"outputs/gemma-2b/dev_tests/{output_filename}"
 
     try:
         print(f"Attempting to resume from S3 ({output_path})...")
@@ -246,8 +246,8 @@ if __name__ == "__main__":
 
     if ACC_ANALYSIS:
         print("Starting Accumulation Analysis...")
-        filename = "outputs/gpt2-xl/dev_tests/out_DLA_gender_baseline_test_v2.csv"
-        output_filename = "outputs/gpt2-xl/dev_tests/accumulated_impact_gender_baseline_test_v2.csv"
+        filename = "outputs/gemma-2b/dev_tests/out_DLA_gender_baseline_test_v2.csv"
+        output_filename = "outputs/gemma-2b/dev_tests/accumulated_impact_gender_baseline_test_v2.csv"
 
         try:
             result_df = accumulative_layer_impact(filename)
