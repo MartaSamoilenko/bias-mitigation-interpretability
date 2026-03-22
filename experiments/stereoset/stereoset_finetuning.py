@@ -1102,6 +1102,17 @@ def run_all_experiments(
 
                 seen_configs.add(config_key)
 
+                seed_suffix = f"_seed{rand_seed}" if rand_seed is not None else ""
+                if config.loss_type == "dpo":
+                    run_id = f"dpo_{exp_type}_{percentile}_beta{config.dpo_beta}_lr{config.learning_rate}{seed_suffix}"
+                else:
+                    run_id = f"sft_{exp_type}_{percentile}_ul{config.ul_weight}_lr{config.learning_rate}{seed_suffix}"
+
+                log_path = f"{config.results_dir}/{run_id}.json"
+                if s3_utils.exists(log_path):
+                    print(f"Experiment {run_id} already done (log found on S3). Skipping.")
+                    continue
+
                 run_config = ExperimentConfig(
                     loss_type=config.loss_type,
                     dpo_beta=config.dpo_beta,
@@ -1129,12 +1140,6 @@ def run_all_experiments(
                 ref_model = HookedTransformer.from_pretrained("google/gemma-2b")
                 for param in ref_model.parameters():
                     param.requires_grad = False
-
-                seed_suffix = f"_seed{rand_seed}" if rand_seed is not None else ""
-                if config.loss_type == "dpo":
-                    run_id = f"dpo_{exp_type}_{percentile}_beta{config.dpo_beta}_lr{config.learning_rate}{seed_suffix}"
-                else:
-                    run_id = f"sft_{exp_type}_{percentile}_ul{config.ul_weight}_lr{config.learning_rate}{seed_suffix}"
 
                 if config.loss_type == "dpo":
                     dataset = DPODataset(

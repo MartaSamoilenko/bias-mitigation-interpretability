@@ -71,6 +71,14 @@ def list_keys(prefix: str) -> list:
     return keys
 
 
+def exists(path: str) -> bool:
+    try:
+        _client().head_object(Bucket=S3_BUCKET, Key=s3_key(path))
+        return True
+    except _client().exceptions.ClientError:
+        return False
+
+
 def write_bytes(data: bytes, path: str):
     _client().put_object(Bucket=S3_BUCKET, Key=s3_key(path), Body=data)
 
