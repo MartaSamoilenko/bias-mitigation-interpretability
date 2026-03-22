@@ -1,5 +1,5 @@
 # Critical packages — pin exact versions (API-sensitive)
-transformer-lens==1.12.0
+transformer-lens
 transformers==4.56.2
 torch==2.8.0
 tokenizers==0.22.1
@@ -28,6 +28,8 @@ safetensors>=0.4.0
 python-dotenv>=1.0.0
 tqdm>=4.66.0
 psutil>=5.9.0
+
+pytest
 
 # lm-evaluation-harness — install from local clone:
 #   pip install -e ./lm-evaluation-harness

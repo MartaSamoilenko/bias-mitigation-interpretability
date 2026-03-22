@@ -935,155 +935,7 @@ def run_training_sft_improved(
     return result_dict
 
 
-
-def run_experiments(
-    model: HookedTransformer,
-    tokenizer,
-    df_impact: pd.DataFrame,
-    df_probability_info: pd.DataFrame,
-    config: ExperimentConfig
-):
-    original_state_dict = deepcopy(model.state_dict())
-    experiment_results = {}
-
-    df_impact_analysis = df_impact_analysis_selection(df_impact, df_probability_info)
-
-    for percentile in config.percentiles:
-        print(f"\n{'='*40}\nRunning Experiment: Top {percentile}% Targets | Loss: {config.loss_type}\n{'='*40}")
-
-        target_ids = []
-        top_heads = pd.Series()
-        top_mlps = pd.Series()
-
-        if config.experiment_type == 'attn':
-            top_heads, target_ids = identify_top_impact_heads(
-                df_impact, df_probability_info, df_impact_analysis, percentile)
-        if config.experiment_type == 'mlp_from_attn':
-            top_mlps, target_ids = identify_mlp_from_attn(
-                df_impact, df_probability_info, df_impact_analysis, percentile)
-        if config.experiment_type == 'mlp_impact_only':
-            top_mlps, target_ids = identify_top_mlp_impact(
-                df_impact, df_probability_info, df_impact_analysis, percentile)
-        if config.experiment_type == 'mlp_probability_only':
-            top_mlps, target_ids = identify_top_mlp_probability(
-                df_impact, df_probability_info, df_impact_analysis, percentile)
-        if config.experiment_type == 'full':
-            target_ids = df_impact_analysis[
-                df_impact_analysis['Model_Preference'] == 'stereotype'
-            ]['ID'].unique().tolist()
-
-        if len(target_ids) == 0:
-            print("No target examples found for this percentile. Skipping.")
-            continue
-
-
-        target_components = []
-        if config.experiment_type == 'attn':
-            target_components = top_heads.index.tolist()
-        elif config.experiment_type in ['mlp_impact_only', 'mlp_probability_only', 'mlp_from_attn']:
-            target_components = top_mlps.index.tolist()
-
-        model, num_params, hook_handles = configure_trainable_parameters(
-            model, target_components=target_components, condition=config.experiment_type)
-
-        optimizer = torch.optim.AdamW(
-            filter(lambda p: p.requires_grad, model.parameters()),
-            lr=config.learning_rate, weight_decay=0.0)
-
-        ref_model = HookedTransformer.from_pretrained("google/gemma-2b")
-        for param in ref_model.parameters():
-            param.requires_grad = False
-
-
-        if config.loss_type == "dpo":
-            run_id = f"dpo_{config.experiment_type}_{percentile}_beta{config.dpo_beta}_lr{config.learning_rate}"
-        else:
-            run_id = f"sft_{config.experiment_type}_{percentile}_ul{config.ul_weight}_lr{config.learning_rate}"
-
-        if config.loss_type == "dpo":
-            dataset = DPODataset(
-                config.dpo_dataset, tokenizer,
-                target_ids=[str(i) for i in target_ids],
-                max_length=config.max_token_length)
-
-            if len(dataset) == 0:
-                print("DPO dataset is empty after filtering. Skipping.")
-                continue
-
-            train_size = int(0.8 * len(dataset))
-            val_size = len(dataset) - train_size
-            train_set, val_set = random_split(
-                dataset, [train_size, val_size],
-                generator=torch.Generator().manual_seed(42))
-
-            train_loader = DataLoader(train_set, batch_size=config.batch_size, shuffle=True)
-            val_loader = DataLoader(val_set, batch_size=config.batch_size, shuffle=False)
-
-            result = run_training_dpo(
-                model, ref_model, train_loader, val_loader, optimizer,
-                config, run_id=run_id, num_params=num_params)
-
-        elif config.loss_type == "sft_improved":
-            sft_dataset = ImprovedSFTDataset(
-                config.fine_tune_dataset, tokenizer,
-                target_ids=None,
-                max_length=config.max_token_length)
-
-            if len(sft_dataset) == 0:
-                print("SFT dataset is empty after filtering. Skipping.")
-                continue
-
-            train_size = int(0.8 * len(sft_dataset))
-            val_size = len(sft_dataset) - train_size
-            train_set, val_set = random_split(
-                sft_dataset, [train_size, val_size],
-                generator=torch.Generator().manual_seed(42))
-
-            train_loader = DataLoader(train_set, batch_size=config.batch_size, shuffle=True)
-            val_loader = DataLoader(val_set, batch_size=config.batch_size, shuffle=False)
-
-            dpo_val_dataset = DPODataset(
-                config.dpo_dataset, tokenizer,
-                target_ids=[str(i) for i in target_ids],
-                max_length=config.max_token_length)
-            val_dpo_loader = None
-            if len(dpo_val_dataset) > 0:
-                _, dpo_val_set = random_split(
-                    dpo_val_dataset,
-                    [int(0.8 * len(dpo_val_dataset)),
-                     len(dpo_val_dataset) - int(0.8 * len(dpo_val_dataset))],
-                    generator=torch.Generator().manual_seed(42))
-                val_dpo_loader = DataLoader(
-                    dpo_val_set, batch_size=config.batch_size, shuffle=False)
-
-            result = run_training_sft_improved(
-                model, ref_model, train_loader, val_loader, val_dpo_loader,
-                optimizer, config, run_id=run_id, num_params=num_params)
-
-        else:
-            raise ValueError(f"Unknown loss_type: {config.loss_type}")
-
-        del ref_model, optimizer, train_loader, val_loader
-
-        import gc
-        gc.collect()
-        torch.cuda.empty_cache()
-
-        experiment_results[(config.experiment_type, percentile)] = result
-
-        print("Cleaning up hooks and resetting weights...")
-        for handle in hook_handles:
-            handle.remove()
-        hook_handles.clear()
-
-        model.load_state_dict(original_state_dict)
-        for param in model.parameters():
-            param.requires_grad = True
-
-    return experiment_results
-
-
-DLA_EXPERIMENT_TYPES = ['attn', 'mlp_from_attn', 'mlp_impact_only', 'full']
+DLA_EXPERIMENT_TYPES = ['attn', 'mlp_from_attn', 'mlp_impact_only']
 RANDOM_EXPERIMENT_TYPES = ['random_attn', 'random_mlp']
 ALL_EXPERIMENT_TYPES = RANDOM_EXPERIMENT_TYPES
 RANDOM_SEEDS = [42]
@@ -1310,6 +1162,13 @@ def run_all_experiments(
                 model.load_state_dict(original_state_dict)
                 for param in model.parameters():
                     param.requires_grad = True
+                
+                del ref_model, optimizer, train_loader, val_loader
+
+                summary_path = f"{config.results_dir}/all_experiment_results.json"
+                serializable = {f"{k[0]}_{k[1]}_s{k[2]}": v for k, v in all_results.items()}
+                s3_utils.write_json(serializable, summary_path)
+                print(f"\nSaved summary of all experiments to s3 ({summary_path})")
 
     summary_path = f"{config.results_dir}/all_experiment_results.json"
     serializable = {f"{k[0]}_{k[1]}_s{k[2]}": v for k, v in all_results.items()}
