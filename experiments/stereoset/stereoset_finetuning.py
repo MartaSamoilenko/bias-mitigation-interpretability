@@ -35,9 +35,9 @@ class ExperimentConfig:
 
     # Infrastructure
     s3_bucket: str = "modelsfinetuned"
-    s3_prefix: str = "stereoset/outputs/gemma-2b/checkpoints_v2"
+    s3_prefix: str = "stereoset_experiments/outputs/gemma-2b/fine_tuned_v2/checkpoints"
     checkpoint_dir: str = "../checkpoints"
-    results_dir: str = "stereoset/outputs/gemma-2b/fine_tuned_v2/logs"
+    results_dir: str = "stereoset_experiments/outputs/gemma-2b/fine_tuned_v2/logs"
 
     # Training hyperparameters
     batch_size: int = 4
@@ -608,7 +608,12 @@ def run_training_dpo(
     run_id: str,
     num_params: int = 0
 ):
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    if torch.cuda.is_available():
+        device = "cuda"
+        # if torch.cuda.device_count() > 1:
+        #     ref_device = "cuda:1"
+    else:
+        device = "cpu"
     model.to(device)
     ref_model.to(device)
     ref_model.eval()
@@ -773,7 +778,13 @@ def run_training_sft_improved(
 
     val_dpo_loader is a DPODataset loader used for preference accuracy tracking.
     """
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    if torch.cuda.is_available():
+        device = "cuda"
+        # if torch.cuda.device_count() > 1:
+        #     ref_device = "cuda:1"
+    else:
+        device = "cpu"
+
     model.to(device)
     ref_model.to(device)
     ref_model.eval()
@@ -1052,6 +1063,12 @@ def run_experiments(
         else:
             raise ValueError(f"Unknown loss_type: {config.loss_type}")
 
+        del ref_model, optimizer, train_loader, val_loader
+
+        import gc
+        gc.collect()
+        torch.cuda.empty_cache()
+
         experiment_results[(config.experiment_type, percentile)] = result
 
         print("Cleaning up hooks and resetting weights...")
@@ -1101,9 +1118,13 @@ def run_all_experiments(
     for exp_type in experiment_types:
         pcts = [100] if exp_type == 'full' else percentiles
 
+
         for percentile in pcts:
             if exp_type == 'mlp_from_attn' and percentile == 0.5:
                 continue
+            # if exp_type == 'attn' and percentile == 0.5 and config.loss_type == "dpo" and config.dpo_beta == 0.3:
+            #     continue
+
             print(f"\n{'='*60}")
             print(f"Experiment: {exp_type} | Percentile: {percentile}% | Loss: {config.loss_type}")
             print(f"{'='*60}")
