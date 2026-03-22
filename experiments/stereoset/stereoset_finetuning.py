@@ -1,3 +1,4 @@
+import gc
 import os
 import json
 import time
@@ -322,6 +323,7 @@ class DPODataset(Dataset):
             "rejected_ids": rejected_ids,
             "rejected_mask": rejected_mask,
             "prompt_length": prompt_len,
+            "sample_idx": idx,
         }
 
 
@@ -532,11 +534,13 @@ def _sequence_log_probs(logits, token_ids, mask):
     return (gathered * completion_mask).sum(dim=-1)
 
 
-def compute_preference_accuracy(model, dataloader, ref_model=None, device="cpu"):
+def compute_preference_accuracy(model, dataloader, ref_model=None, device="cpu",
+                                 ref_chosen_lps=None, ref_rejected_lps=None):
     """Computes the fraction of examples where model prefers chosen over rejected.
 
-    Works with DPO dataloaders. If ref_model is provided, uses DPO-style
-    log-ratio comparison; otherwise uses raw log-prob comparison.
+    Works with DPO dataloaders. If pre-computed ref log-probs are provided,
+    uses them directly; otherwise falls back to live ref_model forward passes;
+    if neither is available, uses raw log-prob comparison.
     """
     model.eval()
     correct = 0
@@ -561,7 +565,11 @@ def compute_preference_accuracy(model, dataloader, ref_model=None, device="cpu")
             chosen_lp = _sequence_log_probs(chosen_logits, chosen_ids, chosen_comp_mask)
             rejected_lp = _sequence_log_probs(rejected_logits, rejected_ids, rejected_comp_mask)
 
-            if ref_model is not None:
+            if ref_chosen_lps is not None and "sample_idx" in batch:
+                ref_chosen_lp = ref_chosen_lps[batch["sample_idx"]].to(device)
+                ref_rejected_lp = ref_rejected_lps[batch["sample_idx"]].to(device)
+                margin = (chosen_lp - rejected_lp) - (ref_chosen_lp - ref_rejected_lp)
+            elif ref_model is not None:
                 ref_chosen_logits = ref_model(chosen_ids)
                 ref_rejected_logits = ref_model(rejected_ids)
                 ref_chosen_lp = _sequence_log_probs(ref_chosen_logits, chosen_ids, chosen_comp_mask)
@@ -598,6 +606,36 @@ def _collect_memory_stats():
     return vram_allocated, vram_reserved, ram_rss
 
 
+def _precompute_ref_log_probs(ref_model, dataset, batch_size, device):
+    """Run ref_model once over a DPO dataset, return per-sample log-probs on CPU."""
+    loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
+    n = len(dataset)
+    ref_chosen_lps = torch.zeros(n)
+    ref_rejected_lps = torch.zeros(n)
+
+    ref_model.eval()
+    with torch.no_grad():
+        for batch in loader:
+            idxs = batch["sample_idx"]
+            chosen_ids = batch["chosen_ids"].to(device)
+            chosen_mask = batch["chosen_mask"].to(device)
+            rejected_ids = batch["rejected_ids"].to(device)
+            rejected_mask = batch["rejected_mask"].to(device)
+            prompt_length = batch["prompt_length"]
+
+            bsz, seq_len = chosen_ids.shape
+            pos = torch.arange(seq_len, device=device).unsqueeze(0).expand(bsz, -1)
+            chosen_comp_mask = (pos >= prompt_length.to(device).unsqueeze(1)) & (chosen_mask.bool())
+            rejected_comp_mask = (pos >= prompt_length.to(device).unsqueeze(1)) & (rejected_mask.bool())
+
+            ref_chosen_logits = ref_model(chosen_ids)
+            ref_rejected_logits = ref_model(rejected_ids)
+            ref_chosen_lps[idxs] = _sequence_log_probs(ref_chosen_logits, chosen_ids, chosen_comp_mask).cpu()
+            ref_rejected_lps[idxs] = _sequence_log_probs(ref_rejected_logits, rejected_ids, rejected_comp_mask).cpu()
+
+    return ref_chosen_lps, ref_rejected_lps
+
+
 def run_training_dpo(
     model: HookedTransformer,
     ref_model: HookedTransformer,
@@ -617,6 +655,16 @@ def run_training_dpo(
     model.to(device)
     ref_model.to(device)
     ref_model.eval()
+
+    base_dataset = getattr(train_loader.dataset, "dataset", train_loader.dataset)
+    print("Pre-computing reference log-probs...")
+    cached_ref_chosen, cached_ref_rejected = _precompute_ref_log_probs(
+        ref_model, base_dataset, config.batch_size, device)
+    ref_model.cpu()
+    del ref_model
+    gc.collect()
+    torch.cuda.empty_cache()
+    print("Reference model deleted, GPU memory freed.")
 
     best_val_loss = float('inf')
     best_epoch = 0
@@ -653,14 +701,10 @@ def run_training_dpo(
             policy_chosen_logits = model(chosen_ids)
             policy_rejected_logits = model(rejected_ids)
 
-            with torch.no_grad():
-                ref_chosen_logits = ref_model(chosen_ids)
-                ref_rejected_logits = ref_model(rejected_ids)
-
             policy_chosen_lp = _sequence_log_probs(policy_chosen_logits, chosen_ids, chosen_comp_mask)
             policy_rejected_lp = _sequence_log_probs(policy_rejected_logits, rejected_ids, rejected_comp_mask)
-            ref_chosen_lp = _sequence_log_probs(ref_chosen_logits, chosen_ids, chosen_comp_mask)
-            ref_rejected_lp = _sequence_log_probs(ref_rejected_logits, rejected_ids, rejected_comp_mask)
+            ref_chosen_lp = cached_ref_chosen[batch["sample_idx"]].to(device)
+            ref_rejected_lp = cached_ref_rejected[batch["sample_idx"]].to(device)
 
             loss = dpo_loss(
                 policy_chosen_lp, policy_rejected_lp,
@@ -691,20 +735,20 @@ def run_training_dpo(
 
                 pc_logits = model(chosen_ids)
                 pr_logits = model(rejected_ids)
-                rc_logits = ref_model(chosen_ids)
-                rr_logits = ref_model(rejected_ids)
 
                 val_loss = dpo_loss(
                     _sequence_log_probs(pc_logits, chosen_ids, chosen_comp_mask),
                     _sequence_log_probs(pr_logits, rejected_ids, rejected_comp_mask),
-                    _sequence_log_probs(rc_logits, chosen_ids, chosen_comp_mask),
-                    _sequence_log_probs(rr_logits, rejected_ids, rejected_comp_mask),
+                    cached_ref_chosen[batch["sample_idx"]].to(device),
+                    cached_ref_rejected[batch["sample_idx"]].to(device),
                     config.dpo_beta
                 )
                 total_val_loss += val_loss.item()
 
         avg_val_loss = total_val_loss / len(val_loader)
-        pref_acc = compute_preference_accuracy(model, val_loader, ref_model, device)
+        pref_acc = compute_preference_accuracy(
+            model, val_loader, ref_model=None, device=device,
+            ref_chosen_lps=cached_ref_chosen, ref_rejected_lps=cached_ref_rejected)
 
         epoch_time = round(time.perf_counter() - epoch_start, 2)
         vram_alloc, vram_resv, ram_rss = _collect_memory_stats()
@@ -788,6 +832,19 @@ def run_training_sft_improved(
     model.to(device)
     ref_model.to(device)
     ref_model.eval()
+
+    cached_ref_chosen = None
+    cached_ref_rejected = None
+    if val_dpo_loader is not None:
+        dpo_base = getattr(val_dpo_loader.dataset, "dataset", val_dpo_loader.dataset)
+        print("Pre-computing reference log-probs for DPO validation...")
+        cached_ref_chosen, cached_ref_rejected = _precompute_ref_log_probs(
+            ref_model, dpo_base, config.batch_size, device)
+    ref_model.cpu()
+    del ref_model
+    gc.collect()
+    torch.cuda.empty_cache()
+    print("Reference model deleted, GPU memory freed.")
 
     best_val_loss = float('inf')
     best_epoch = 0
@@ -874,7 +931,9 @@ def run_training_sft_improved(
 
         pref_acc = 0.0
         if val_dpo_loader is not None:
-            pref_acc = compute_preference_accuracy(model, val_dpo_loader, ref_model, device)
+            pref_acc = compute_preference_accuracy(
+                model, val_dpo_loader, ref_model=None, device=device,
+                ref_chosen_lps=cached_ref_chosen, ref_rejected_lps=cached_ref_rejected)
 
         epoch_time = round(time.perf_counter() - epoch_start, 2)
         vram_alloc, vram_resv, ram_rss = _collect_memory_stats()
@@ -935,7 +994,7 @@ def run_training_sft_improved(
     return result_dict
 
 
-DLA_EXPERIMENT_TYPES = ['attn', 'mlp_from_attn', 'mlp_impact_only']
+DLA_EXPERIMENT_TYPES = ['attn', 'mlp_from_attn', 'mlp_impact_only', 'full']
 RANDOM_EXPERIMENT_TYPES = ['random_attn', 'random_mlp']
 ALL_EXPERIMENT_TYPES = RANDOM_EXPERIMENT_TYPES
 RANDOM_SEEDS = [42]
@@ -1164,6 +1223,8 @@ def run_all_experiments(
                     param.requires_grad = True
                 
                 del ref_model, optimizer, train_loader, val_loader
+                gc.collect()
+                torch.cuda.empty_cache()
 
                 summary_path = f"{config.results_dir}/all_experiment_results.json"
                 serializable = {f"{k[0]}_{k[1]}_s{k[2]}": v for k, v in all_results.items()}
