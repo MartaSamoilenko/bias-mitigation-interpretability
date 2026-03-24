@@ -18,8 +18,8 @@ print(f"Device : {device}")
 model.eval()
 
 try:
-    rephrased_stereoset = s3_utils.read_json('data/stereoset/gender_test_rephrased.json')
-    raw_data = s3_utils.read_json('data/stereoset/test.json')
+    rephrased_stereoset = s3_utils.read_json('data/stereoset/gender_dev_rephrased.json')
+    raw_data = s3_utils.read_json('data/stereoset/dev.json')
 except Exception as e:
     print(f"Error loading data from S3: {e}")
     rephrased_stereoset = []
@@ -235,19 +235,19 @@ if __name__ == "__main__":
         exit(0)
 
     if TRACING:
-        test_file_path = "data/stereoset/gender_test_rephrased.json"
+        test_file_path = "data/stereoset/gender_dev_rephrased.json"
         print(f"Loading testing data from S3 ({test_file_path})...")
         test_data = s3_utils.read_json(test_file_path)
         print(f"Loaded {len(test_data)} testing examples.")
 
         print("Starting Tracing on Testing Data...")
-        all_data = layer_tracing(test_data, "out_DLA_gender_baseline_test_v2.csv")
+        all_data = layer_tracing(test_data, "out_DLA_gender_baseline_dev_v2.csv")
         print("Tracing Complete.")
 
     if ACC_ANALYSIS:
         print("Starting Accumulation Analysis...")
-        filename = "outputs/gemma-2b/dev_tests/out_DLA_gender_baseline_test_v2.csv"
-        output_filename = "outputs/gemma-2b/dev_tests/accumulated_impact_gender_baseline_test_v2.csv"
+        filename = "outputs/gemma-2b/dev_tests/out_DLA_gender_baseline_dev_v2.csv"
+        output_filename = "outputs/gemma-2b/dev_tests/accumulated_impact_gender_baseline_dev_v2.csv"
 
         try:
             result_df = accumulative_layer_impact(filename)
