@@ -6,7 +6,7 @@ from huggingface_hub import login
 import boto3
 import os
 from dotenv import load_dotenv
-from experiments import s3_utils
+import s3_utils
 
 load_dotenv()
 
@@ -183,18 +183,18 @@ def layer_tracing(model, dataset, output_path):
 
 def run_experiments_finetuned(run_ids,
                               s3_bucket: str = "modelsfinetuned",
-                              s3_prefix: str = "gpt2-xl-finetuned"):
+                              s3_prefix: str = "stereoset_experiments/outputs/gemma-2b/fine_tuned_v2/checkpoints"):
     s3_client = boto3.client('s3',
                              aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
                              aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"])
 
-    test_model = HookedTransformer.from_pretrained("gpt2-xl")
+    test_model = HookedTransformer.from_pretrained("google/gemma-2b")
     test_model.eval()
 
     for run_id in run_ids:
         print(f"\n{'='*60}\nEvaluating run: {run_id}\n{'='*60}")
 
-        log = s3_utils.read_json(f"outputs/gpt2-xl/fine_tuned/logs/{run_id}.json")
+        log = s3_utils.read_json(f"outputs/gemma-2b/fine_tuned_v2/logs/{run_id}.json")
         best_epoch = log["best_epoch"] - 1
 
         checkpoint_key = f"{s3_prefix}/best_model_{run_id}_epoch_{best_epoch}.pt"
@@ -207,10 +207,10 @@ def run_experiments_finetuned(run_ids,
         os.remove(local_tmp)
         print("Checkpoint loaded.")
 
-        results_base = f"outputs/gpt2-xl/fine_tuned/results/{run_id}"
+        results_base = f"outputs/gemma-2b/fine_tuned_v2/results/{run_id}"
 
         if TRACING:
-            test_file_path = "data/stereoset/splits/gender_test.json"
+            test_file_path = "data/stereoset/gender_dev_rephrased.json"
             print(f"Loading testing data from S3 ({test_file_path})...")
             test_data = s3_utils.read_json(test_file_path)
             print(f"Loaded {len(test_data)} testing examples.")
@@ -236,8 +236,8 @@ def run_experiments_finetuned(run_ids,
 
 
 if __name__ == "__main__":
-    log_keys = s3_utils.list_keys("outputs/gpt2-xl/fine_tuned/logs/")
-    prefix = s3_utils.s3_key("outputs/gpt2-xl/fine_tuned/logs/")
+    log_keys = s3_utils.list_keys("outputs/gemma-2b/fine_tuned_v2/logs/")
+    prefix = s3_utils.s3_key("outputs/gemma-2b/fine_tuned_v2/logs/")
     run_ids = [
         k[len(prefix):].replace(".json", "")
         for k in log_keys
