@@ -15,7 +15,7 @@ import torch
 from dotenv import load_dotenv
 from transformer_lens import HookedTransformer
 
-import s3_utils
+from experiments import s3_utils
 
 load_dotenv()
 
@@ -246,12 +246,12 @@ def accumulative_layer_impact(filename):
 TRAIN_DATASET_PATH = "data/winogender/winogender_paired_dataset.json"
 TEST_DATASET_PATH = "data/winogender/winogender_test_dataset.json"
 
-BASELINE_TRAIN_DIR = "outputs/gpt2-xl/winogender/baseline/train"
-BASELINE_TEST_DIR = "outputs/gpt2-xl/winogender/baseline/test"
-FT_TRAIN_DIR = "outputs/gpt2-xl/winogender/fine_tuned/train"
-FT_TEST_DIR = "outputs/gpt2-xl/winogender/fine_tuned/test"
-FT_LOGS_DIR = "outputs/gpt2-xl/winogender/fine_tuned/logs"
-FT_CHECKPOINTS_PREFIX = "experiments/outputs/gpt2-xl/winogender/fine_tuned/checkpoints"
+BASELINE_TRAIN_DIR = "outputs/gemma-2b/winogender/baseline/train"
+BASELINE_TEST_DIR = "outputs/gemma-2b/winogender/baseline/test"
+FT_TRAIN_DIR = "outputs/gemma-2b/winogender/fine_tuned/train"
+FT_TEST_DIR = "outputs/gemma-2b/winogender/fine_tuned/test"
+FT_LOGS_DIR = "outputs/gemma-2b/winogender/fine_tuned/logs"
+FT_CHECKPOINTS_PREFIX = "experiments/outputs/gemma-2b/winogender/fine_tuned/checkpoints"
 
 _SPLIT_DIRS = {"train": BASELINE_TRAIN_DIR, "test": BASELINE_TEST_DIR}
 _SPLIT_DATASETS = {"train": TRAIN_DATASET_PATH, "test": TEST_DATASET_PATH}
@@ -267,8 +267,8 @@ def run_baseline(split="train", dataset_path=None):
     suffix_path = f"{base_dir}/suffix_probs.csv"
     acc_path = f"{base_dir}/accumulated_impact.csv"
 
-    print("Loading GPT-2 XL baseline ...")
-    model = HookedTransformer.from_pretrained("gpt2-xl")
+    print("Loading baseline ...")
+    model = HookedTransformer.from_pretrained("google/gemma-2b")
     model.eval()
 
     print(f"Loading Winogender dataset from S3 ({dataset_path}) ...")
@@ -299,8 +299,8 @@ def run_finetuned(run_id, split="train", dataset_path=None):
         aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
     )
 
-    print(f"Loading GPT-2 XL and applying checkpoint for {run_id} ...")
-    model = HookedTransformer.from_pretrained("gpt2-xl")
+    print(f"Loading model and applying checkpoint for {run_id} ...")
+    model = HookedTransformer.from_pretrained("google/gemma-2b")
     model.eval()
 
     log = s3_utils.read_json(f"{FT_LOGS_DIR}/{run_id}.json")

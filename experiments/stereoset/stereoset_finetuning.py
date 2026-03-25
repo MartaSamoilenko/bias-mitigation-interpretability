@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 
 
 
-import s3_utils
+from experiments import s3_utils
 
 # try:
 from transformer_lens import HookedTransformer

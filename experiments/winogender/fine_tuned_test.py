@@ -22,11 +22,11 @@ from experiments.winogender.winogender_bias_search import (
 
 load_dotenv()
 
-LOGS_DIR = "outputs/gpt2-xl/winogender/fine_tuned/logs"
+LOGS_DIR = "outputs/gemma-2b/winogender/fine_tuned/logs"
 S3_BUCKET = "modelsfinetuned"
-S3_PREFIX = "experiments/outputs/gpt2-xl/winogender/fine_tuned/checkpoints"
+S3_PREFIX = "experiments/outputs/gemma-2b/winogender/fine_tuned/checkpoints"
 TEST_DATASET_PATH = "data/winogender/winogender_test_dataset.json"
-RESULTS_BASE = "outputs/gpt2-xl/winogender/fine_tuned/test"
+RESULTS_BASE = "outputs/gemma-2b/winogender/fine_tuned/test"
 
 
 def discover_run_ids():
@@ -58,7 +58,7 @@ def run_experiments_finetuned_winogender(
 ):
     """Evaluate multiple fine-tuned Winogender models on the test dataset.
 
-    Loads GPT-2 XL once and swaps state dicts between runs to avoid
+    Loads model once and swaps state dicts between runs to avoid
     reloading the full model for each checkpoint.
     """
     if dataset_path is None:
@@ -70,8 +70,8 @@ def run_experiments_finetuned_winogender(
         aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
     )
 
-    print("Loading GPT-2 XL ...")
-    model = HookedTransformer.from_pretrained("gpt2-xl")
+    print("Loading model ...")
+    model = HookedTransformer.from_pretrained("google/gemma-2b")
     model.eval()
     original_state_dict = deepcopy(model.state_dict())
 

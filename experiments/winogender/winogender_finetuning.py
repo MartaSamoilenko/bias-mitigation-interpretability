@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 from torch.utils.data import DataLoader, random_split
 from transformer_lens import HookedTransformer
 
-from experiments import s3_utils
+from experiments.winogender import s3_utils
 from experiments.stereoset.stereoset_finetuning import (
     ExperimentConfig,
     DPODataset,
@@ -31,14 +31,14 @@ from experiments.stereoset.stereoset_finetuning import (
 
 load_dotenv()
 
-PRONOUN_PROBS_PATH = "outputs/gpt2-xl/winogender/baseline/train/pronoun_probs.csv"
-ACC_IMPACT_PATH = "outputs/gpt2-xl/winogender/baseline/train/accumulated_impact.csv"
+PRONOUN_PROBS_PATH = "outputs/gemma-2b/winogender/baseline/train/pronoun_probs.csv"
+ACC_IMPACT_PATH = "outputs/gemma-2b/winogender/baseline/train/accumulated_impact.csv"
 METADATA_PATH = "data/winogender/winogender_paired_metadata.json"
 
 DPO_DATASET = "data/winogender/fine-tune-dpo/winogender_dpo.jsonl"
 SFT_DATASET = "data/winogender/fine-tune-sft/winogender_sft.jsonl"
-RESULTS_DIR = "outputs/gpt2-xl/winogender/fine_tuned/logs"
-S3_PREFIX = "experiments/outputs/gpt2-xl/winogender/fine_tuned/checkpoints"
+RESULTS_DIR = "outputs/gemma-2b/winogender/fine_tuned/logs"
+S3_PREFIX = "experiments/outputs/gemma-2b/winogender/fine_tuned/checkpoints"
 
 DLA_EXPERIMENT_TYPES = ["attn", "mlp_from_attn", "mlp_impact_only", "full"]
 RANDOM_EXPERIMENT_TYPES = ["random_attn", "random_mlp"]
@@ -46,7 +46,7 @@ ALL_EXPERIMENT_TYPES = DLA_EXPERIMENT_TYPES + RANDOM_EXPERIMENT_TYPES
 RANDOM_SEEDS = [42]
 DEFAULT_PERCENTILES = [0.5, 0.8, 1.0, 5.0, 10.0]
 
-N_LAYERS = 48
+N_LAYERS = 18
 LAST_LAYER = N_LAYERS - 1
 
 
@@ -243,7 +243,7 @@ def run_all_experiments_winogender(
                     lr=config.learning_rate, weight_decay=0.0,
                 )
 
-                ref_model = HookedTransformer.from_pretrained("gpt2-xl")
+                ref_model = HookedTransformer.from_pretrained("google/gemma-2b")
                 for param in ref_model.parameters():
                     param.requires_grad = False
 
@@ -333,8 +333,8 @@ def run_all_experiments_winogender(
 
 
 if __name__ == "__main__":
-    print("Loading GPT-2 XL ...")
-    model = HookedTransformer.from_pretrained("gpt2-xl")
+    print("Loading model ...")
+    model = HookedTransformer.from_pretrained("google/gemma-2b")
     tokenizer = model.tokenizer
 
     print("Loading Winogender DLA data from S3 ...")
