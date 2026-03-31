@@ -15,9 +15,7 @@ from torch.utils.data import Dataset, DataLoader, random_split
 from torch import nn
 from dotenv import load_dotenv
 
-
-
-from experiments import s3_utils
+import s3_utils
 
 # try:
 from transformer_lens import HookedTransformer
@@ -36,9 +34,9 @@ class ExperimentConfig:
 
     # Infrastructure
     s3_bucket: str = "modelsfinetuned"
-    s3_prefix: str = "stereoset_experiments/outputs/gemma-2b/fine_tuned_v2/checkpoints"
+    s3_prefix: str = "stereoset_experiments/outputs/llama3.2_1b/fine_tuned_v2/checkpoints"
     checkpoint_dir: str = "../checkpoints"
-    results_dir: str = "stereoset_experiments/outputs/gemma-2b/fine_tuned_v2/logs"
+    results_dir: str = "stereoset_experiments/outputs/llama3.2_1b/fine_tuned_v2/logs"
 
     # Training hyperparameters
     batch_size: int = 4
@@ -994,7 +992,7 @@ def run_training_sft_improved(
     return result_dict
 
 
-DLA_EXPERIMENT_TYPES = ['attn', 'mlp_from_attn', 'mlp_impact_only', 'full']
+DLA_EXPERIMENT_TYPES = ['attn', 'mlp_from_attn', 'mlp_impact_only']
 RANDOM_EXPERIMENT_TYPES = ['random_attn', 'random_mlp']
 ALL_EXPERIMENT_TYPES = RANDOM_EXPERIMENT_TYPES
 RANDOM_SEEDS = [42]
@@ -1137,7 +1135,7 @@ def run_all_experiments(
                     filter(lambda p: p.requires_grad, model.parameters()),
                     lr=config.learning_rate, weight_decay=0.0)
 
-                ref_model = HookedTransformer.from_pretrained("google/gemma-2b")
+                ref_model = HookedTransformer.from_pretrained("meta-llama/Llama-3.2-1B")
                 for param in ref_model.parameters():
                     param.requires_grad = False
 
@@ -1269,13 +1267,13 @@ if __name__ == "__main__":
         {"percentile": 5.0, "dpo_beta": 0.3, "learning_rate": 5e-6},
     ]
 
-    print("Loading google/gemma-2b ...")
-    model = HookedTransformer.from_pretrained("google/gemma-2b")
+    print("Loading meta-llama/Llama-3.2-1B ...")
+    model = HookedTransformer.from_pretrained("meta-llama/Llama-3.2-1B")
     tokenizer = model.tokenizer
 
     print("Loading StereoSet DLA data from S3 ...")
-    df_impact = s3_utils.read_csv("outputs/gemma-2b/dev_tests/accumulated_impact_gender_baseline_test_v2.csv")
-    df_probs = s3_utils.read_csv("outputs/gemma-2b/dev_tests/out_DLA_gender_baseline_test_v2.csv")
+    df_impact = s3_utils.read_csv("outputs/llama3.2_1b/dev_tests/accumulated_impact_gender_baseline_test_v2_norm.csv")
+    df_probs = s3_utils.read_csv("outputs/llama3.2_1b/dev_tests/out_DLA_gender_baseline_test_v2_norm.csv")
 
     ALL_LRS = [1e-5, 5e-6, 1e-6]
     FULL_LRS = [5e-6, 1e-6]

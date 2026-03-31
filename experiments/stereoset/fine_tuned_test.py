@@ -15,28 +15,127 @@ login(token=os.environ["HF_TOKEN"])
 TRACING = True
 ACC_ANALYSIS = True
 
+SENTENCEPIECE_MODELS = {"gemma", "llama", "mistral", "t5"}
+BPE_MODELS = {"gpt2", "gpt-j", "opt", "llama-3"}
+
+device = "cuda" if torch.cuda.is_available() else "cpu"
+
+print(f"Device : {device}")
+
+def get_model_family(model_name: str) -> str:
+    name_lower = model_name.lower()
+    for family in BPE_MODELS:
+        if family in name_lower:
+            return "bpe"
+    for family in SENTENCEPIECE_MODELS:
+        if family in name_lower:
+            return "sentencepiece"
+    return "unknown"
+
+def tokenize_candidate(model, word: str, model_name: str) -> list[int] | None:
+    family = get_model_family(model_name)
+
+    if family == "sentencepiece":
+        # SentencePiece
+        DUMMY = "The"
+        dummy_ids = model.tokenizer.encode(DUMMY, add_special_tokens=False)
+        combined_ids = model.tokenizer.encode(
+            f"{DUMMY} {word}", add_special_tokens=False
+        )
+        candidate_ids = combined_ids[len(dummy_ids):]
+    else:
+        # BPE (GPT-2, Llama-3 Tiktoken)
+        try:
+            candidate_ids = model.tokenizer.encode(
+                word, add_special_tokens=False, add_prefix_space=True
+            )
+        except TypeError:
+            candidate_ids = model.tokenizer.encode(
+                ' ' + word, add_special_tokens=False
+            )
+    
+    if len(candidate_ids) == 0:
+        print(f"[WARNING] Word '{word}' produced 0 tokens. Skipping.")
+        return None
+
+    return candidate_ids
+
+
+def validate_model_compatibility(model):
+    """
+    Run once after model load to log architectural properties
+    and confirm DLA assumptions hold.
+    """
+    cfg = model.cfg
+    ln = model.ln_final
+    ln_type = type(ln).__name__
+
+    # --- Norm type report ---
+    ln_weight = get_ln_final_weight(model)
+    if ln_weight is not None:
+        print(f"[OK] ln_final type : {ln_type} — has learnable gamma "
+              f"(shape: {ln_weight.shape})")
+    else:
+        print(f"[OK] ln_final type : {ln_type} — weightless (RMSNormPre). "
+              f"DLA will use raw_unembed_dir / ln_scale.")
+
+    assert hasattr(ln, 'hook_scale'), (
+        f"ln_final ({ln_type}) has no hook_scale HookPoint. "
+        f"Update your TransformerLens version (>= 0.13 required)."
+    )
+    print(f"[OK] ln_final.hook_scale is present.")
+
+    n_heads = cfg.n_heads
+    n_kv_heads = getattr(cfg, 'n_key_value_heads', n_heads)
+    if n_kv_heads < n_heads:
+        print(f"[OK] GQA detected: n_heads={n_heads}, "
+              f"n_key_value_heads={n_kv_heads}. "
+              f"TransformerLens expands hook_z to n_heads — einsum is valid.")
+    else:
+        print(f"[OK] MHA: n_heads={n_heads} (no GQA).")
+
+    act_fn = cfg.act_fn
+    gated = act_fn in ("silu", "geglu", "swiglu", "gelu_new")
+    print(f"[OK] act_fn={act_fn} → {'GatedMLP' if gated else 'StandardMLP'}. "
+          f"hook_mlp_out is valid for DLA in both cases.")
+
+    print(f"\n[READY] '{cfg.model_name}' | "
+          f"layers={cfg.n_layers} | d_model={cfg.d_model} | "
+          f"d_head={cfg.d_head}")
+
+def get_ln_final_weight(model) -> torch.Tensor | None:
+    ln = model.ln_final
+
+    if hasattr(ln, 'w') and ln.w is not None:
+        return ln.w  # [d_model]
+
+    return None
+
 def get_logit_attribution(model, cache, target_token_id, layer):
+
+    ln_scale = cache["ln_final.hook_scale"][0, -1, 0]
+    ln_weight = get_ln_final_weight(model)
 
     raw_unembed_dir = model.W_U[:, target_token_id]
     target_unembed_dir = raw_unembed_dir
 
-    attn_result = cache[f"blocks.{layer}.attn.hook_z"][0, -1]
+    if ln_weight is not None:
+        # LayerNorm / RMSNorm: gamma rescales each dimension individually.
+        effective_unembed_dir = (ln_weight / ln_scale) * target_unembed_dir
+    else:
+        # RMSNormPre (Gemma-2B, Llama-3): no gamma, just RMS scaling.
+        effective_unembed_dir = raw_unembed_dir / ln_scale
 
+    attn_result = cache[f"blocks.{layer}.attn.hook_z"][0, -1]
     W_O = model.W_O[layer]
 
-    # Head Contributions
-    # h = heads, d = d_head, m = d_model
-    # attn_result (h, d) * W_O (h, d, m) -> projects to residual stream (h, m)
-    # ... * target_unembed_dir (m) -> projects to logit (h)
     head_contributions = torch.einsum("hd, hdm, m -> h",
                                       attn_result,
                                       W_O,
-                                      target_unembed_dir)
+                                      effective_unembed_dir) #target_unembed_dir
 
-    # MLP Contribution
-    # Shape: [d_model]
     mlp_out = cache[f"blocks.{layer}.hook_mlp_out"][0, -1]
-    mlp_contribution = torch.dot(mlp_out, target_unembed_dir)
+    mlp_contribution = torch.dot(mlp_out, effective_unembed_dir) #target_unembed_dir
 
     return head_contributions, mlp_contribution
 
@@ -101,26 +200,52 @@ def accumulative_layer_impact(filename):
 
     return result_df
 
-def layer_tracing(model, dataset, output_path):
+def layer_tracing(model, 
+                  dataset, 
+                  output_path,
+                  s3_bucket = None, 
+                  checkpoint_key = None, 
+                  local_tmp = None,
+                  s3_client = None):
+    
     df_ids = []
-    try:
-        df = s3_utils.read_csv(output_path)
-        df_ids = df['ID'].tolist()
-    except:
-        pass
 
     all_data = []
 
+    # Check if experiment has already run, if the experiment ran - skip
+    try:
+        df = s3_utils.read_csv(output_path)
+        if 'ID' in df.columns:
+            df_ids = df['ID'].unique().tolist()
+            print(f"Found existing trace. Processed IDs: {len(df_ids)} / Total in dataset: {len(dataset)}")
+
+            if len(df_ids) >= len(dataset):
+                print("Tracing already complete. Skipping ... ")
+                return df.to_dict('records'), False
+            
+            # If partially run, prepopulate all_data so we append to existing rows
+            all_data = df.to_dict('records')
+            print(f"Resuming from {len(df_ids)} previously processed items...")
+    except Exception as e:
+        print(f"Could not load previous trace, starting fresh. (Reason: {e})")
+    
+    print(f"Downloading checkpoint s3://{s3_bucket}/{checkpoint_key} ...")
+    s3_client.download_file(s3_bucket, checkpoint_key, local_tmp)
+    model.load_state_dict(torch.load(local_tmp, weights_only=True))
+    os.remove(local_tmp)
+    print("Checkpoint loaded.")
+
+
     for idx, sub_dict in enumerate(dataset):
         if sub_dict['id'] in df_ids:
-            all_data.append(df_ids.index(sub_dict['id']))
             continue
 
         print(f"Processing item {idx}...")
-        if len(all_data) % 10 == 0 and idx != 0:
+        
+        if idx % 10 == 0 and idx != 0:
             print("Saving intermediate results to S3...")
-            df = pd.DataFrame(all_data)
-            s3_utils.write_csv(df, output_path)
+            df_temp = pd.DataFrame(all_data)
+            s3_utils.write_csv(df_temp, output_path)
 
         ID = sub_dict['id']
 
@@ -128,87 +253,90 @@ def layer_tracing(model, dataset, output_path):
         candidates = sub_dict['targets']
 
         for stereotype_key, word in candidates.items():
-            word_with_space = ' ' + word
-            target_tokens = model.tokenizer.encode(word_with_space)
+            # word_with_space = ' ' + word
+            # target_tokens = model.tokenizer.encode(word_with_space)
+
+            target_tokens = tokenize_candidate(model, word, model.cfg.model_name)
 
             current_prompt = original_prompt
-            layer_accumulated_probs = torch.ones(model.cfg.n_layers, device='cpu')
+            layer_accumulated_probs = torch.ones(model.cfg.n_layers, device=device)
+
+            current_prompt = original_prompt
+            layer_accumulated_probs = torch.ones(model.cfg.n_layers, device=device)
 
             for token_pos, token_id in enumerate(target_tokens):
 
                 with torch.no_grad():
-                    _, cache = model.run_with_cache(current_prompt)
+                    _, cache = model.run_with_cache(current_prompt,
+                                                    return_type=None)
+                try:
+                    for layer in range(model.cfg.n_layers):
+                        hidden_state = cache[f"blocks.{layer}.hook_resid_post"][0:1, -1:]
+                        normalized_resid = model.ln_final(hidden_state)
+                        layer_logits_3d = model.unembed(normalized_resid)
 
-                for layer in range(model.cfg.n_layers):
+                        layer_logits = layer_logits_3d[0, 0]
+                        layer_probs = torch.softmax(layer_logits, dim=-1)
+                        p_token = layer_probs[token_id].item()
 
-                    hidden_state = cache[f"blocks.{layer}.hook_resid_post"][0, -1]
+                        layer_accumulated_probs[layer] *= p_token
 
-                    normalized_resid = model.ln_final(hidden_state)
+                        head_contribs, mlp_contrib = get_logit_attribution(
+                            model, cache, token_id, layer
+                        )
 
-                    layer_logits = model.unembed(normalized_resid)
-                    layer_probs = torch.softmax(layer_logits, dim=-1)
+                        row = {
+                            "ID": ID,
+                            "Prompt": current_prompt,
+                            "Candidate": word,
+                            "Token_Str": model.to_string(token_id),
+                            "Token_Position": token_pos,
+                            "Is_First_Token": (token_pos == 0),
+                            "Type": stereotype_key,
+                            "Layer": layer,
+                            "Layer_Accumulated_Prob": layer_accumulated_probs[layer].item(),
+                            "Token_Instant_Prob": p_token,
+                            "MLP_Logit_Impact": mlp_contrib.item(),
+                        }
 
-                    p_token = layer_probs[token_id].item()
+                        for head_idx, score in enumerate(head_contribs):
+                            row[f"Head_{head_idx}"] = score.item()
 
-                    layer_accumulated_probs[layer] *= p_token
-
-                    head_contribs, mlp_contrib = get_logit_attribution(
-                        model, cache, token_id, layer
-                    )
-
-                    row = {
-                        "ID": ID,
-                        "Prompt": current_prompt,
-                        "Candidate": word,
-                        "Token_Str": model.to_string(token_id),
-                        "Token_Position": token_pos,
-                        "Is_First_Token": (token_pos == 0),
-                        "Type": stereotype_key,
-                        "Layer": layer,
-                        "Layer_Accumulated_Prob": layer_accumulated_probs[layer].item(),
-                        "Token_Instant_Prob": p_token,
-                        "MLP_Logit_Impact": mlp_contrib.item(),
-                    }
-
-                    for head_idx, score in enumerate(head_contribs):
-                        row[f"Head_{head_idx}"] = score.item()
-
-                    all_data.append(row)
+                        all_data.append(row)
+                        pass
+                finally:
+                    del cache
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
 
                 current_prompt += model.to_string(token_id)
     df = pd.DataFrame(all_data)
     s3_utils.write_csv(df, output_path)
 
-    return all_data
+    return all_data, True
 
 def run_experiments_finetuned(run_ids,
                               s3_bucket: str = "modelsfinetuned",
-                              s3_prefix: str = "stereoset_experiments/outputs/gemma-2b/fine_tuned_v2/checkpoints"):
+                              s3_prefix: str = "stereoset_experiments/outputs/llama3.2_1b/fine_tuned_v2/checkpoints"):
     s3_client = boto3.client('s3',
                              aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
                              aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"])
 
-    test_model = HookedTransformer.from_pretrained("google/gemma-2b")
+    test_model = HookedTransformer.from_pretrained("meta-llama/Llama-3.2-1B")
     test_model.eval()
 
     for run_id in run_ids:
         print(f"\n{'='*60}\nEvaluating run: {run_id}\n{'='*60}")
 
-        log = s3_utils.read_json(f"outputs/gemma-2b/fine_tuned_v2/logs/{run_id}.json")
+        log = s3_utils.read_json(f"outputs/llama3.2_1b/fine_tuned_v2/logs/{run_id}.json")
         best_epoch = log["best_epoch"] - 1
 
         checkpoint_key = f"{s3_prefix}/best_model_{run_id}_epoch_{best_epoch}.pt"
         local_tmp = f"checkpoints/{run_id}.pt"
         os.makedirs("checkpoints", exist_ok=True)
 
-        print(f"Downloading checkpoint s3://{s3_bucket}/{checkpoint_key} ...")
-        s3_client.download_file(s3_bucket, checkpoint_key, local_tmp)
-        test_model.load_state_dict(torch.load(local_tmp, weights_only=True))
-        os.remove(local_tmp)
-        print("Checkpoint loaded.")
-
-        results_base = f"outputs/gemma-2b/fine_tuned_v2/results/{run_id}"
-
+        results_base = f"outputs/llama3.2_1b/fine_tuned_v2/results/{run_id}"
+        run_acc = True
         if TRACING:
             test_file_path = "data/stereoset/gender_dev_rephrased.json"
             print(f"Loading testing data from S3 ({test_file_path})...")
@@ -217,10 +345,16 @@ def run_experiments_finetuned(run_ids,
 
             dla_path = f"{results_base}/out_DLA_gender_test.csv"
             print("Starting Tracing on Testing Data...")
-            layer_tracing(test_model, test_data, dla_path)
+            _, run_acc = layer_tracing(test_model,
+                          test_data, 
+                          dla_path, 
+                          s3_bucket, 
+                          checkpoint_key, 
+                          local_tmp,
+                          s3_client)
             print("Tracing Complete.")
 
-        if ACC_ANALYSIS:
+        if ACC_ANALYSIS and run_acc: 
             print("Starting Accumulation Analysis...")
             dla_path = f"{results_base}/out_DLA_gender_test.csv"
             acc_path = f"{results_base}/accumulated_impact_gender_test.csv"
@@ -236,8 +370,8 @@ def run_experiments_finetuned(run_ids,
 
 
 if __name__ == "__main__":
-    log_keys = s3_utils.list_keys("outputs/gemma-2b/fine_tuned_v2/logs/")
-    prefix = s3_utils.s3_key("outputs/gemma-2b/fine_tuned_v2/logs/")
+    log_keys = s3_utils.list_keys("outputs/llama3.2_1b/fine_tuned_v2/logs/")
+    prefix = s3_utils.s3_key("outputs/llama3.2_1b/fine_tuned_v2/logs/")
     run_ids = [
         k[len(prefix):].replace(".json", "")
         for k in log_keys
