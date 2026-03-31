@@ -11,6 +11,7 @@ from typing import FrozenSet, List, Set, Tuple
 import pandas as pd
 import torch
 from dotenv import load_dotenv
+from huggingface_hub import login
 from torch.utils.data import DataLoader, random_split
 from transformer_lens import HookedTransformer
 
@@ -30,15 +31,16 @@ from experiments.stereoset.stereoset_finetuning import (
 )
 
 load_dotenv()
+login(token=os.environ["HF_TOKEN"])
 
-PRONOUN_PROBS_PATH = "outputs/gemma-2b/winogender/baseline/train/pronoun_probs.csv"
-ACC_IMPACT_PATH = "outputs/gemma-2b/winogender/baseline/train/accumulated_impact.csv"
+PRONOUN_PROBS_PATH = "outputs/llama3.2_1b/winogender/baseline/train/pronoun_probs.csv"
+ACC_IMPACT_PATH = "outputs/llama3.2_1b/winogender/baseline/train/accumulated_impact.csv"
 METADATA_PATH = "data/winogender/winogender_paired_metadata.json"
 
 DPO_DATASET = "data/winogender/fine-tune-dpo/winogender_dpo.jsonl"
 SFT_DATASET = "data/winogender/fine-tune-sft/winogender_sft.jsonl"
-RESULTS_DIR = "outputs/gemma-2b/winogender/fine_tuned/logs"
-S3_PREFIX = "experiments/outputs/gemma-2b/winogender/fine_tuned/checkpoints"
+RESULTS_DIR = "outputs/llama3.2_1b/winogender/fine_tuned/logs"
+S3_PREFIX = "experiments/outputs/llama3.2_1b/winogender/fine_tuned/checkpoints"
 
 DLA_EXPERIMENT_TYPES = ["attn", "mlp_from_attn", "mlp_impact_only", "full"]
 RANDOM_EXPERIMENT_TYPES = ["random_attn", "random_mlp"]
@@ -46,14 +48,11 @@ ALL_EXPERIMENT_TYPES = DLA_EXPERIMENT_TYPES + RANDOM_EXPERIMENT_TYPES
 RANDOM_SEEDS = [42]
 DEFAULT_PERCENTILES = [0.5, 0.8, 1.0, 5.0, 10.0]
 
-N_LAYERS = 18
-LAST_LAYER = N_LAYERS - 1
-
-
 def winogender_impact_analysis_selection(
     df_impact: pd.DataFrame,
     df_probs: pd.DataFrame,
     metadata: list,
+    last_layer: int,
 ) -> pd.DataFrame:
     """Annotate accumulated-impact DF with a Model_Preference column.
 
@@ -65,7 +64,7 @@ def winogender_impact_analysis_selection(
 
     occ_last = df_probs[
         (df_probs["Sentence_Role"] == "occupation")
-        & (df_probs["Layer"] == LAST_LAYER)
+        & (df_probs["Layer"] == last_layer)
         & (df_probs["Is_First_Token"] == True)  # noqa: E712
     ].copy()
 
@@ -140,8 +139,9 @@ def run_all_experiments_winogender(
         percentiles = DEFAULT_PERCENTILES
 
     original_state_dict = deepcopy(model.state_dict())
+    last_layer = model.cfg.n_layers - 1
     df_impact_analysis = winogender_impact_analysis_selection(
-        df_impact, df_probs, metadata
+        df_impact, df_probs, metadata, last_layer
     )
 
     all_results = {}
@@ -243,7 +243,7 @@ def run_all_experiments_winogender(
                     lr=config.learning_rate, weight_decay=0.0,
                 )
 
-                ref_model = HookedTransformer.from_pretrained("google/gemma-2b")
+                ref_model = HookedTransformer.from_pretrained("meta-llama/Llama-3.2-1B")
                 for param in ref_model.parameters():
                     param.requires_grad = False
 
@@ -334,7 +334,7 @@ def run_all_experiments_winogender(
 
 if __name__ == "__main__":
     print("Loading model ...")
-    model = HookedTransformer.from_pretrained("google/gemma-2b")
+    model = HookedTransformer.from_pretrained("meta-llama/Llama-3.2-1B")
     tokenizer = model.tokenizer
 
     print("Loading Winogender DLA data from S3 ...")

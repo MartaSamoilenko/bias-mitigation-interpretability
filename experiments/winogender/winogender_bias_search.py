@@ -13,14 +13,105 @@ import boto3
 import pandas as pd
 import torch
 from dotenv import load_dotenv
+from huggingface_hub import login
 from transformer_lens import HookedTransformer
 
 from experiments import s3_utils
 
 load_dotenv()
+login(token=os.environ["HF_TOKEN"])
 
 TRACING = True
 ACC_ANALYSIS = True
+
+SENTENCEPIECE_MODELS = {"gemma", "llama", "mistral", "t5"}
+BPE_MODELS = {"gpt2", "gpt-j", "opt", "llama-3"}
+
+def get_model_family(model_name: str) -> str:
+    name_lower = model_name.lower()
+    for family in BPE_MODELS:
+        if family in name_lower:
+            return "bpe"
+    for family in SENTENCEPIECE_MODELS:
+        if family in name_lower:
+            return "sentencepiece"
+    return "unknown"
+
+def tokenize_candidate(model, word: str, model_name: str) -> list[int] | None:
+    family = get_model_family(model_name)
+
+    if family == "sentencepiece":
+        DUMMY = "The"
+        dummy_ids = model.tokenizer.encode(DUMMY, add_special_tokens=False)
+        combined_ids = model.tokenizer.encode(
+            f"{DUMMY} {word}", add_special_tokens=False
+        )
+        candidate_ids = combined_ids[len(dummy_ids):]
+    else:
+        try:
+            candidate_ids = model.tokenizer.encode(
+                word, add_special_tokens=False, add_prefix_space=True
+            )
+        except TypeError:
+            candidate_ids = model.tokenizer.encode(
+                ' ' + word, add_special_tokens=False
+            )
+
+    if len(candidate_ids) == 0:
+        print(f"[WARNING] Word '{word}' produced 0 tokens. Skipping.")
+        return None
+
+    return candidate_ids
+
+
+def validate_model_compatibility(model):
+    """
+    Run once after model load to log architectural properties
+    and confirm DLA assumptions hold.
+    """
+    cfg = model.cfg
+    ln = model.ln_final
+    ln_type = type(ln).__name__
+
+    ln_weight = get_ln_final_weight(model)
+    if ln_weight is not None:
+        print(f"[OK] ln_final type : {ln_type} — has learnable gamma "
+              f"(shape: {ln_weight.shape})")
+    else:
+        print(f"[OK] ln_final type : {ln_type} — weightless (RMSNormPre). "
+              f"DLA will use raw_unembed_dir / ln_scale.")
+
+    assert hasattr(ln, 'hook_scale'), (
+        f"ln_final ({ln_type}) has no hook_scale HookPoint. "
+        f"Update your TransformerLens version (>= 0.13 required)."
+    )
+    print(f"[OK] ln_final.hook_scale is present.")
+
+    n_heads = cfg.n_heads
+    n_kv_heads = getattr(cfg, 'n_key_value_heads', n_heads)
+    if n_kv_heads < n_heads:
+        print(f"[OK] GQA detected: n_heads={n_heads}, "
+              f"n_key_value_heads={n_kv_heads}. "
+              f"TransformerLens expands hook_z to n_heads — einsum is valid.")
+    else:
+        print(f"[OK] MHA: n_heads={n_heads} (no GQA).")
+
+    act_fn = cfg.act_fn
+    gated = act_fn in ("silu", "geglu", "swiglu", "gelu_new")
+    print(f"[OK] act_fn={act_fn} → {'GatedMLP' if gated else 'StandardMLP'}. "
+          f"hook_mlp_out is valid for DLA in both cases.")
+
+    print(f"\n[READY] '{cfg.model_name}' | "
+          f"layers={cfg.n_layers} | d_model={cfg.d_model} | "
+          f"d_head={cfg.d_head}")
+
+def get_ln_final_weight(model) -> torch.Tensor | None:
+    ln = model.ln_final
+
+    if hasattr(ln, 'w') and ln.w is not None:
+        return ln.w
+
+    return None
 
 
 def _pronoun_probs_stage1(model, prefix, pronoun_words, pair_id, sentence_role):
@@ -34,9 +125,12 @@ def _pronoun_probs_stage1(model, prefix, pronoun_words, pair_id, sentence_role):
     with torch.no_grad():
         _, cache = model.run_with_cache(prefix)
 
+    ln_scale = cache["ln_final.hook_scale"][0, cache_pos, 0]
+    ln_weight = get_ln_final_weight(model)
+
     rows = []
     for gender_key, pronoun_word in pronoun_words.items():
-        token_ids = model.tokenizer.encode(" " + pronoun_word)
+        token_ids = tokenize_candidate(model, pronoun_word, model.cfg.model_name)
 
         for tok_offset, target_id in enumerate(token_ids):
             layer_acc_prob = torch.ones(model.cfg.n_layers, device="cpu")
@@ -49,15 +143,19 @@ def _pronoun_probs_stage1(model, prefix, pronoun_words, pair_id, sentence_role):
                 p_tok = probs[target_id].item()
                 layer_acc_prob[layer] *= p_tok
 
-                unembed_dir = model.W_U[:, target_id]
+                raw_unembed_dir = model.W_U[:, target_id]
+                if ln_weight is not None:
+                    effective_unembed_dir = (ln_weight / ln_scale) * raw_unembed_dir
+                else:
+                    effective_unembed_dir = raw_unembed_dir / ln_scale
 
                 attn_z = cache[f"blocks.{layer}.attn.hook_z"][0, cache_pos]
                 head_contribs = torch.einsum(
-                    "hd, hdm, m -> h", attn_z, model.W_O[layer], unembed_dir
+                    "hd, hdm, m -> h", attn_z, model.W_O[layer], effective_unembed_dir
                 )
 
                 mlp_out = cache[f"blocks.{layer}.hook_mlp_out"][0, cache_pos]
-                mlp_contrib = torch.dot(mlp_out, unembed_dir)
+                mlp_contrib = torch.dot(mlp_out, effective_unembed_dir)
 
                 row = {
                     "ID": pair_id,
@@ -146,7 +244,7 @@ def paired_tracing(model, dataset, pronoun_probs_path, suffix_probs_path):
         best_gender, best_pronoun, best_prob = None, None, -1.0
 
         for gender_key, pronoun_word in pronouns.items():
-            tok_ids = model.tokenizer.encode(" " + pronoun_word)
+            tok_ids = tokenize_candidate(model, pronoun_word, model.cfg.model_name)
             first_tok_id = tok_ids[0]
 
             hidden_key = f"blocks.{model.cfg.n_layers - 1}.hook_resid_post"
@@ -172,7 +270,7 @@ def paired_tracing(model, dataset, pronoun_probs_path, suffix_probs_path):
 
             full_text = f"{prefix_text} {best_pronoun} {suffix_text}"
             prefix_tok_len = len(model.tokenizer.encode(prefix_text))
-            pronoun_tok_len = len(model.tokenizer.encode(" " + best_pronoun))
+            pronoun_tok_len = len(tokenize_candidate(model, best_pronoun, model.cfg.model_name))
             suffix_start = prefix_tok_len + pronoun_tok_len
 
             slp = _suffix_log_prob(model, full_text, suffix_start)
@@ -246,12 +344,12 @@ def accumulative_layer_impact(filename):
 TRAIN_DATASET_PATH = "data/winogender/winogender_paired_dataset.json"
 TEST_DATASET_PATH = "data/winogender/winogender_test_dataset.json"
 
-BASELINE_TRAIN_DIR = "outputs/gemma-2b/winogender/baseline/train"
-BASELINE_TEST_DIR = "outputs/gemma-2b/winogender/baseline/test"
-FT_TRAIN_DIR = "outputs/gemma-2b/winogender/fine_tuned/train"
-FT_TEST_DIR = "outputs/gemma-2b/winogender/fine_tuned/test"
-FT_LOGS_DIR = "outputs/gemma-2b/winogender/fine_tuned/logs"
-FT_CHECKPOINTS_PREFIX = "experiments/outputs/gemma-2b/winogender/fine_tuned/checkpoints"
+BASELINE_TRAIN_DIR = "outputs/llama3.2_1b/winogender/baseline/train"
+BASELINE_TEST_DIR = "outputs/llama3.2_1b/winogender/baseline/test"
+FT_TRAIN_DIR = "outputs/llama3.2_1b/winogender/fine_tuned/train"
+FT_TEST_DIR = "outputs/llama3.2_1b/winogender/fine_tuned/test"
+FT_LOGS_DIR = "outputs/llama3.2_1b/winogender/fine_tuned/logs"
+FT_CHECKPOINTS_PREFIX = "experiments/outputs/llama3.2_1b/winogender/fine_tuned/checkpoints"
 
 _SPLIT_DIRS = {"train": BASELINE_TRAIN_DIR, "test": BASELINE_TEST_DIR}
 _SPLIT_DATASETS = {"train": TRAIN_DATASET_PATH, "test": TEST_DATASET_PATH}
@@ -268,8 +366,9 @@ def run_baseline(split="train", dataset_path=None):
     acc_path = f"{base_dir}/accumulated_impact.csv"
 
     print("Loading baseline ...")
-    model = HookedTransformer.from_pretrained("google/gemma-2b")
+    model = HookedTransformer.from_pretrained("meta-llama/Llama-3.2-1B")
     model.eval()
+    validate_model_compatibility(model)
 
     print(f"Loading Winogender dataset from S3 ({dataset_path}) ...")
     dataset = s3_utils.read_json(dataset_path)
@@ -300,8 +399,9 @@ def run_finetuned(run_id, split="train", dataset_path=None):
     )
 
     print(f"Loading model and applying checkpoint for {run_id} ...")
-    model = HookedTransformer.from_pretrained("google/gemma-2b")
+    model = HookedTransformer.from_pretrained("meta-llama/Llama-3.2-1B")
     model.eval()
+    validate_model_compatibility(model)
 
     log = s3_utils.read_json(f"{FT_LOGS_DIR}/{run_id}.json")
     best_epoch = log["best_epoch"] - 1

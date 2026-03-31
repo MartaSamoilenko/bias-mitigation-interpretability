@@ -12,6 +12,7 @@ from copy import deepcopy
 import boto3
 import torch
 from dotenv import load_dotenv
+from huggingface_hub import login
 from transformer_lens import HookedTransformer
 
 from experiments import s3_utils
@@ -21,12 +22,13 @@ from experiments.winogender.winogender_bias_search import (
 )
 
 load_dotenv()
+login(token=os.environ["HF_TOKEN"])
 
-LOGS_DIR = "outputs/gemma-2b/winogender/fine_tuned/logs"
+LOGS_DIR = "outputs/llama3.2_1b/winogender/fine_tuned/logs"
 S3_BUCKET = "modelsfinetuned"
-S3_PREFIX = "experiments/outputs/gemma-2b/winogender/fine_tuned/checkpoints"
+S3_PREFIX = "experiments/outputs/llama3.2_1b/winogender/fine_tuned/checkpoints"
 TEST_DATASET_PATH = "data/winogender/winogender_test_dataset.json"
-RESULTS_BASE = "outputs/gemma-2b/winogender/fine_tuned/test"
+RESULTS_BASE = "outputs/llama3.2_1b/winogender/fine_tuned/test"
 
 
 def discover_run_ids():
@@ -71,7 +73,7 @@ def run_experiments_finetuned_winogender(
     )
 
     print("Loading model ...")
-    model = HookedTransformer.from_pretrained("google/gemma-2b")
+    model = HookedTransformer.from_pretrained("meta-llama/Llama-3.2-1B")
     model.eval()
     original_state_dict = deepcopy(model.state_dict())
 
