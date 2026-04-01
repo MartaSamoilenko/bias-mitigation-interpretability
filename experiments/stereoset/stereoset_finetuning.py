@@ -15,7 +15,7 @@ from torch.utils.data import Dataset, DataLoader, random_split
 from torch import nn
 from dotenv import load_dotenv
 
-import s3_utils
+from experiments.stereoset import s3_utils
 
 # try:
 from transformer_lens import HookedTransformer
@@ -992,7 +992,11 @@ def run_training_sft_improved(
     return result_dict
 
 
-DLA_EXPERIMENT_TYPES = ['attn', 'mlp_from_attn', 'mlp_impact_only']
+DLA_EXPERIMENT_TYPES = [
+                        # 'attn', 
+                        # 'mlp_from_attn', 
+                        # 'mlp_impact_only', 
+                        'full']
 RANDOM_EXPERIMENT_TYPES = ['random_attn', 'random_mlp']
 ALL_EXPERIMENT_TYPES = RANDOM_EXPERIMENT_TYPES
 RANDOM_SEEDS = [42]
@@ -1259,12 +1263,12 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     TOP_5_CONFIGS = [
-        {"percentile": 0.5, "dpo_beta": 0.3, "learning_rate": 1e-5},
-        {"percentile": 0.8, "dpo_beta": 0.3, "learning_rate": 1e-5},
-        {"percentile": 1.0, "dpo_beta": 0.3, "learning_rate": 1e-5},
-        {"percentile": 5.0, "dpo_beta": 0.3, "learning_rate": 1e-5},
-        {"percentile": 1.0, "dpo_beta": 0.5, "learning_rate": 1e-5},
-        {"percentile": 5.0, "dpo_beta": 0.3, "learning_rate": 5e-6},
+        {"percentile": 10.0, "dpo_beta": 0.3, "learning_rate": 5e-6},
+        {"percentile": 10.0, "dpo_beta": 0.5, "learning_rate": 5e-6},
+        {"percentile": 10.0, "dpo_beta": 0.3, "learning_rate": 5e-6},
+        {"percentile": 10.0, "dpo_beta": 0.5, "learning_rate": 1e-6},
+        {"percentile": 10.0, "dpo_beta": 0.3, "learning_rate": 1e-6},
+        {"percentile": 10.0, "dpo_beta": 0.3, "learning_rate": 5e-6},
     ]
 
     print("Loading meta-llama/Llama-3.2-1B ...")
