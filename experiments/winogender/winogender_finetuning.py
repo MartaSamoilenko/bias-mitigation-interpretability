@@ -197,10 +197,11 @@ def run_all_experiments_winogender(
                     target_components = top_mlps.index.tolist()
                 elif exp_type == "random_attn":
                     target_components = generate_random_heads(
-                        len(top_heads), seed=rand_seed)
+                        len(top_heads), n_layers=model.cfg.n_layers,
+                        heads_per_layer=model.cfg.n_heads, seed=rand_seed)
                 elif exp_type == "random_mlp":
                     target_components = generate_random_mlps(
-                        len(top_mlps), seed=rand_seed)
+                        len(top_mlps), n_layers=model.cfg.n_layers, seed=rand_seed)
 
                 condition = ("attn" if exp_type == "random_attn"
                              else "mlp_impact_only" if exp_type == "random_mlp"

@@ -193,7 +193,7 @@ def identify_mlp_from_attn(
     return mlp_series, target_ids
 
 
-def generate_random_heads(n_heads: int, n_layers: int = 48, heads_per_layer: int = 25, seed: int = 42) -> List[str]:
+def generate_random_heads(n_heads: int, n_layers: int, heads_per_layer: int, seed: int = 42) -> List[str]:
     """Return n_heads randomly selected component names in '{layer}_Head_{idx}' format."""
     rng = np.random.default_rng(seed)
     all_heads = [f"{layer}_Head_{head}" for layer in range(n_layers) for head in range(heads_per_layer)]
@@ -201,7 +201,7 @@ def generate_random_heads(n_heads: int, n_layers: int = 48, heads_per_layer: int
     return sorted(chosen.tolist())
 
 
-def generate_random_mlps(n_mlps: int, n_layers: int = 48, seed: int = 42) -> List[str]:
+def generate_random_mlps(n_mlps: int, n_layers: int, seed: int = 42) -> List[str]:
     """Return n_mlps randomly selected component names in '{layer}_MLP' format."""
     rng = np.random.default_rng(seed)
     all_mlps = [f"{layer}_MLP" for layer in range(n_layers)]
@@ -1080,10 +1080,13 @@ def run_all_experiments(
                     target_components = top_mlps.index.tolist()
                 elif exp_type == 'random_attn':
                     n_heads = len(top_heads)
-                    target_components = generate_random_heads(n_heads, seed=rand_seed)
+                    target_components = generate_random_heads(
+                        n_heads, n_layers=model.cfg.n_layers,
+                        heads_per_layer=model.cfg.n_heads, seed=rand_seed)
                 elif exp_type == 'random_mlp':
                     n_mlps = len(top_mlps)
-                    target_components = generate_random_mlps(n_mlps, seed=rand_seed)
+                    target_components = generate_random_mlps(
+                        n_mlps, n_layers=model.cfg.n_layers, seed=rand_seed)
 
                 condition = 'attn' if exp_type == 'random_attn' else (
                     'mlp_impact_only' if exp_type == 'random_mlp' else exp_type)
