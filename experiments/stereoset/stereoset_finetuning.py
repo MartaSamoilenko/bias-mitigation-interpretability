@@ -1263,12 +1263,12 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     TOP_5_CONFIGS = [
-        {"percentile": 10.0, "dpo_beta": 0.3, "learning_rate": 5e-6},
-        {"percentile": 10.0, "dpo_beta": 0.5, "learning_rate": 5e-6},
-        {"percentile": 10.0, "dpo_beta": 0.3, "learning_rate": 5e-6},
-        {"percentile": 10.0, "dpo_beta": 0.5, "learning_rate": 1e-6},
-        {"percentile": 10.0, "dpo_beta": 0.3, "learning_rate": 1e-6},
-        {"percentile": 10.0, "dpo_beta": 0.3, "learning_rate": 5e-6},
+        {"percentile": 10.0, "dpo_beta": 0.3, "learning_rate": 5e-6, "experiment_type": "mlp_from_attn"},
+        {"percentile": 10.0, "dpo_beta": 0.5, "learning_rate": 5e-6, "experiment_type": "mlp_impact_only"},
+        {"percentile": 10.0, "dpo_beta": 0.3, "learning_rate": 5e-6, "experiment_type": "mlp_impact_only"},
+        {"percentile": 10.0, "dpo_beta": 0.5, "learning_rate": 1e-6, "experiment_type": "mlp_from_attn"},
+        {"percentile": 10.0, "dpo_beta": 0.3, "learning_rate": 1e-6, "experiment_type": "mlp_impact_only"},
+        {"percentile": 10.0, "dpo_beta": 0.3, "learning_rate": 5e-6, "experiment_type": "attn"},
     ]
 
     print("Loading meta-llama/Llama-3.2-1B ...")
@@ -1324,9 +1324,17 @@ if __name__ == "__main__":
                     percentiles=[cfg["percentile"]],
                 )
     def run_random_ablation():
+        RANDOM_MAP = {
+            "attn": "random_attn",
+            "mlp_impact_only": "random_mlp",
+            "mlp_from_attn": "random_mlp",
+        }
         for i, cfg in enumerate(TOP_5_CONFIGS, 1):
+            exp_type = cfg["experiment_type"]
+            random_type = RANDOM_MAP[exp_type]
             print(f"\n{'#'*60}")
             print(f"# Random ablation {i}/{len(TOP_5_CONFIGS)}: "
+                  f"{random_type} (control for {exp_type}), "
                   f"percentile={cfg['percentile']}, "
                   f"beta={cfg['dpo_beta']}, lr={cfg['learning_rate']}")
             print(f"{'#'*60}")
@@ -1337,7 +1345,7 @@ if __name__ == "__main__":
             )
             run_all_experiments(
                 model, tokenizer, df_impact, df_probs, config,
-                experiment_types=["random_attn"],
+                experiment_types=[random_type],
                 percentiles=[cfg["percentile"]],
             )
 
