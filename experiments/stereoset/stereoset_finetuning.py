@@ -34,9 +34,9 @@ class ExperimentConfig:
 
     # Infrastructure
     s3_bucket: str = "modelsfinetuned"
-    s3_prefix: str = "stereoset_experiments/outputs/llama3.2_1b/fine_tuned_v2/checkpoints"
+    s3_prefix: str = "stereoset_experiments/outputs/gpt2-xl/fine_tuned_v2/checkpoints"
     checkpoint_dir: str = "../checkpoints"
-    results_dir: str = "stereoset_experiments/outputs/llama3.2_1b/fine_tuned_v2/logs"
+    results_dir: str = "stereoset_experiments/outputs/gpt2-xl/fine_tuned_v2/logs"
 
     # Training hyperparameters
     batch_size: int = 4
@@ -1142,7 +1142,7 @@ def run_all_experiments(
                     filter(lambda p: p.requires_grad, model.parameters()),
                     lr=config.learning_rate, weight_decay=0.0)
 
-                ref_model = HookedTransformer.from_pretrained("meta-llama/Llama-3.2-1B")
+                ref_model = HookedTransformer.from_pretrained("gpt2-xl")
                 for param in ref_model.parameters():
                     param.requires_grad = False
 
@@ -1274,13 +1274,13 @@ if __name__ == "__main__":
         {"percentile": 10.0, "dpo_beta": 0.3, "learning_rate": 5e-6, "experiment_type": "attn"},
     ]
 
-    print("Loading meta-llama/Llama-3.2-1B ...")
-    model = HookedTransformer.from_pretrained("meta-llama/Llama-3.2-1B")
+    print("Loading gpt2-xl ...")
+    model = HookedTransformer.from_pretrained("gpt2-xl")
     tokenizer = model.tokenizer
 
     print("Loading StereoSet DLA data from S3 ...")
-    df_impact = s3_utils.read_csv("outputs/llama3.2_1b/dev_tests/accumulated_impact_gender_baseline_test_v2_norm.csv")
-    df_probs = s3_utils.read_csv("outputs/llama3.2_1b/dev_tests/out_DLA_gender_baseline_test_v2_norm.csv")
+    df_impact = s3_utils.read_csv("outputs/gpt2-xl/dev_tests/accumulated_impact_gender_baseline_test_v2.csv")
+    df_probs = s3_utils.read_csv("outputs/gpt2-xl/dev_tests/out_DLA_gender_baseline_test_v2.csv")
 
     ALL_LRS = [1e-5, 5e-6, 1e-6]
     FULL_LRS = [5e-6, 1e-6]
