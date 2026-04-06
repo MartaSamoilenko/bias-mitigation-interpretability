@@ -370,12 +370,37 @@ def run_experiments_finetuned(run_ids,
 
 
 if __name__ == "__main__":
-    log_keys = s3_utils.list_keys("outputs/llama3.2_1b/fine_tuned_v2/logs/")
-    prefix = s3_utils.s3_key("outputs/llama3.2_1b/fine_tuned_v2/logs/")
-    run_ids = [
-        k[len(prefix):].replace(".json", "")
-        for k in log_keys
-        if k.endswith(".json") and "all_experiment" not in k
-    ]
-    print(f"Discovered {len(run_ids)} run(s): {run_ids}")
-    run_experiments_finetuned(run_ids)
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Batch evaluation of StereoSet fine-tuned models")
+    parser.add_argument(
+        "--run_id", type=str, default=None,
+        help="Evaluate a single run ID instead of all discovered runs.")
+    parser.add_argument(
+        "--filter", choices=["all", "dla", "random"], default="all",
+        dest="filter_mode",
+        help="all = evaluate all runs; dla = DLA-only; random = random-ablation only.")
+    args = parser.parse_args()
+
+    if args.run_id:
+        ids = [args.run_id]
+        print(f"Single-run mode: {args.run_id}")
+    else:
+        log_keys = s3_utils.list_keys("outputs/llama3.2_1b/fine_tuned_v2/logs/")
+        prefix = s3_utils.s3_key("outputs/llama3.2_1b/fine_tuned_v2/logs/")
+        ids = [
+            k[len(prefix):].replace(".json", "")
+            for k in log_keys
+            if k.endswith(".json") and "all_experiment" not in k
+        ]
+        if args.filter_mode == "random":
+            ids = [r for r in ids if "random_attn" in r or "random_mlp" in r]
+        elif args.filter_mode == "dla":
+            ids = [r for r in ids if "random" not in r]
+        print(f"Discovered {len(ids)} run(s): {ids}")
+
+    if not ids:
+        print("No runs to evaluate. Exiting.")
+    else:
+        run_experiments_finetuned(ids)

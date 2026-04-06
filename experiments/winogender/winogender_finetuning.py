@@ -334,6 +334,22 @@ def run_all_experiments_winogender(
 
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Winogender fine-tuning: DLA sweep, random ablation, or both.")
+    parser.add_argument(
+        "--mode", choices=["dla", "random", "all"], default="dla",
+        help="dla = DLA hyper-param sweep (default); "
+             "random = random-layer ablation for top configs; "
+             "all = DLA then random.")
+    args = parser.parse_args()
+
+    TOP_N_CONFIGS = [
+        {"percentile": 10.0, "dpo_beta": 0.3, "learning_rate": 5e-6, "experiment_type": "attn"},
+        {"percentile": 10.0, "dpo_beta": 0.5, "learning_rate": 5e-6, "experiment_type": "mlp_impact_only"},
+    ]
+
     print("Loading model ...")
     model = HookedTransformer.from_pretrained("meta-llama/Llama-3.2-1B")
     tokenizer = model.tokenizer
@@ -357,27 +373,59 @@ if __name__ == "__main__":
             **kwargs,
         )
 
-    for beta in [0.3, 0.5]:
-        for lr in ALL_LRS:
-            exp_types = [t for t in DLA_EXPERIMENT_TYPES if t != "full"]
-            if lr in FULL_LRS:
-                exp_types = DLA_EXPERIMENT_TYPES
-            print(f"\n{'#' * 60}\n# DPO: beta={beta}, lr={lr}\n{'#' * 60}")
-            cfg = _make_config(loss_type="dpo", dpo_beta=beta, learning_rate=lr)
+    def run_dla_sweep():
+        for beta in [0.3, 0.5]:
+            for lr in ALL_LRS:
+                exp_types = [t for t in DLA_EXPERIMENT_TYPES if t != "full"]
+                if lr in FULL_LRS:
+                    exp_types = DLA_EXPERIMENT_TYPES
+                print(f"\n{'#' * 60}\n# DPO: beta={beta}, lr={lr}\n{'#' * 60}")
+                cfg = _make_config(loss_type="dpo", dpo_beta=beta, learning_rate=lr)
+                run_all_experiments_winogender(
+                    model, tokenizer, df_impact, df_probs, metadata, cfg,
+                    experiment_types=exp_types,
+                )
+
+        for ul_w in [0.5, 1.0]:
+            for lr in ALL_LRS:
+                exp_types = [t for t in DLA_EXPERIMENT_TYPES if t != "full"]
+                if lr in FULL_LRS:
+                    exp_types = DLA_EXPERIMENT_TYPES
+                print(f"\n{'#' * 60}\n# SFT: ul_weight={ul_w}, lr={lr}\n{'#' * 60}")
+                cfg = _make_config(
+                    loss_type="sft_improved", ul_weight=ul_w, learning_rate=lr)
+                run_all_experiments_winogender(
+                    model, tokenizer, df_impact, df_probs, metadata, cfg,
+                    experiment_types=exp_types,
+                )
+
+    def run_random_ablation():
+        RANDOM_MAP = {
+            "attn": "random_attn",
+            "mlp_impact_only": "random_mlp",
+            "mlp_from_attn": "random_mlp",
+        }
+        for i, cfg in enumerate(TOP_N_CONFIGS, 1):
+            exp_type = cfg["experiment_type"]
+            random_type = RANDOM_MAP[exp_type]
+            print(f"\n{'#'*60}")
+            print(f"# Random ablation {i}/{len(TOP_N_CONFIGS)}: "
+                  f"{random_type} (control for {exp_type}), "
+                  f"percentile={cfg['percentile']}, "
+                  f"beta={cfg['dpo_beta']}, lr={cfg['learning_rate']}")
+            print(f"{'#'*60}")
+            config = _make_config(
+                loss_type="dpo",
+                dpo_beta=cfg["dpo_beta"],
+                learning_rate=cfg["learning_rate"],
+            )
             run_all_experiments_winogender(
-                model, tokenizer, df_impact, df_probs, metadata, cfg,
-                experiment_types=exp_types,
+                model, tokenizer, df_impact, df_probs, metadata, config,
+                experiment_types=[random_type],
+                percentiles=[cfg["percentile"]],
             )
 
-    for ul_w in [0.5, 1.0]:
-        for lr in ALL_LRS:
-            exp_types = [t for t in DLA_EXPERIMENT_TYPES if t != "full"]
-            if lr in FULL_LRS:
-                exp_types = DLA_EXPERIMENT_TYPES
-            print(f"\n{'#' * 60}\n# SFT: ul_weight={ul_w}, lr={lr}\n{'#' * 60}")
-            cfg = _make_config(
-                loss_type="sft_improved", ul_weight=ul_w, learning_rate=lr)
-            run_all_experiments_winogender(
-                model, tokenizer, df_impact, df_probs, metadata, cfg,
-                experiment_types=exp_types,
-            )
+    if args.mode in ("dla", "all"):
+        run_dla_sweep()
+    if args.mode in ("random", "all"):
+        run_random_ablation()

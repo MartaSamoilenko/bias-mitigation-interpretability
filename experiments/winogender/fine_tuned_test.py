@@ -150,6 +150,10 @@ if __name__ == "__main__":
     parser.add_argument(
         "--skip_existing", action="store_true",
         help="Skip runs that already have results on S3.")
+    parser.add_argument(
+        "--filter", choices=["all", "dla", "random"], default="all",
+        dest="filter_mode",
+        help="all = evaluate all runs; dla = DLA-only; random = random-ablation only.")
     args = parser.parse_args()
 
     if args.run_id:
@@ -157,6 +161,10 @@ if __name__ == "__main__":
         print(f"Single-run mode: {args.run_id}")
     else:
         ids = discover_run_ids()
+        if args.filter_mode == "random":
+            ids = [r for r in ids if "random_attn" in r or "random_mlp" in r]
+        elif args.filter_mode == "dla":
+            ids = [r for r in ids if "random" not in r]
         print(f"Discovered {len(ids)} run(s): {ids}")
 
     if not ids:
