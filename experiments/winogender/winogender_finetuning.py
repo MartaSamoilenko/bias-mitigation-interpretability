@@ -346,8 +346,11 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     TOP_N_CONFIGS = [
-        {"percentile": 10.0, "dpo_beta": 0.3, "learning_rate": 5e-6, "experiment_type": "attn"},
-        {"percentile": 10.0, "dpo_beta": 0.5, "learning_rate": 5e-6, "experiment_type": "mlp_impact_only"},
+        {"percentile": 1.0, "dpo_beta": 0.3, "ul_weight" : None, "learning_rate": 1e-6, "experiment_type": "attn"},
+        {"percentile": 0.5, "dpo_beta": None, "ul_weight" : 1.0, "learning_rate": 1e-5, "experiment_type": "mlp_impact_only"},
+        {"percentile": 0.8, "dpo_beta": 0.3, "ul_weight" : None, "learning_rate": 1e-6, "experiment_type": "attn"},
+        {"percentile": 10.0, "dpo_beta": None, "ul_weight" : 0.5, "learning_rate": 1e-6, "experiment_type": "attn"},
+        {"percentile": 0.5, "dpo_beta": None, "ul_weight" : 1.0, "learning_rate": 5e-6, "experiment_type": "mlp_impact_only"},
     ]
 
     print("Loading model ...")
