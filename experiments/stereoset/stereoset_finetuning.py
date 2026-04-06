@@ -1266,12 +1266,12 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     TOP_5_CONFIGS = [
-        {"percentile": 10.0, "dpo_beta": 0.3, "learning_rate": 5e-6, "experiment_type": "mlp_from_attn"},
-        {"percentile": 10.0, "dpo_beta": 0.5, "learning_rate": 5e-6, "experiment_type": "mlp_impact_only"},
-        {"percentile": 10.0, "dpo_beta": 0.3, "learning_rate": 5e-6, "experiment_type": "mlp_impact_only"},
-        {"percentile": 10.0, "dpo_beta": 0.5, "learning_rate": 1e-6, "experiment_type": "mlp_from_attn"},
-        {"percentile": 10.0, "dpo_beta": 0.3, "learning_rate": 1e-6, "experiment_type": "mlp_impact_only"},
-        {"percentile": 10.0, "dpo_beta": 0.3, "learning_rate": 5e-6, "experiment_type": "attn"},
+        {"percentile": 10.0, "loss_type": "dpo", "dpo_beta": 0.3, "learning_rate": 5e-6, "experiment_type": "mlp_from_attn"},
+        {"percentile": 10.0, "loss_type": "dpo", "dpo_beta": 0.5, "learning_rate": 5e-6, "experiment_type": "mlp_impact_only"},
+        {"percentile": 10.0, "loss_type": "dpo", "dpo_beta": 0.3, "learning_rate": 5e-6, "experiment_type": "mlp_impact_only"},
+        {"percentile": 10.0, "loss_type": "dpo", "dpo_beta": 0.5, "learning_rate": 1e-6, "experiment_type": "mlp_from_attn"},
+        {"percentile": 10.0, "loss_type": "dpo", "dpo_beta": 0.3, "learning_rate": 1e-6, "experiment_type": "mlp_impact_only"},
+        {"percentile": 10.0, "loss_type": "dpo", "dpo_beta": 0.3, "learning_rate": 5e-6, "experiment_type": "attn"},
     ]
 
     print("Loading gpt2-xl ...")
@@ -1335,17 +1335,23 @@ if __name__ == "__main__":
         for i, cfg in enumerate(TOP_5_CONFIGS, 1):
             exp_type = cfg["experiment_type"]
             random_type = RANDOM_MAP[exp_type]
+            hp_label = (f"beta={cfg['dpo_beta']}" if cfg["loss_type"] == "dpo"
+                        else f"ul_weight={cfg['ul_weight']}")
             print(f"\n{'#'*60}")
             print(f"# Random ablation {i}/{len(TOP_5_CONFIGS)}: "
                   f"{random_type} (control for {exp_type}), "
                   f"percentile={cfg['percentile']}, "
-                  f"beta={cfg['dpo_beta']}, lr={cfg['learning_rate']}")
+                  f"{hp_label}, lr={cfg['learning_rate']}")
             print(f"{'#'*60}")
-            config = ExperimentConfig(
-                loss_type="dpo",
-                dpo_beta=cfg["dpo_beta"],
-                learning_rate=cfg["learning_rate"],
-            )
+            config_kwargs = {
+                "loss_type": cfg["loss_type"],
+                "learning_rate": cfg["learning_rate"],
+            }
+            if cfg["loss_type"] == "dpo":
+                config_kwargs["dpo_beta"] = cfg["dpo_beta"]
+            else:
+                config_kwargs["ul_weight"] = cfg["ul_weight"]
+            config = ExperimentConfig(**config_kwargs)
             run_all_experiments(
                 model, tokenizer, df_impact, df_probs, config,
                 experiment_types=[random_type],
