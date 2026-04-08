@@ -10,6 +10,8 @@ from tqdm import tqdm
 import os
 import time
 
+device = "cuda" if torch.cuda.is_available() else "cpu"
+
 class ModelModifier:
     def __init__(self, model_name=None, top_percent=15, batch_size=1, hooked=False):
         self.model_name = model_name
@@ -19,7 +21,7 @@ class ModelModifier:
         if model_name:
             try:
                 if hooked:
-                    hf_model = AutoModelForCausalLM.from_pretrained(model_name).to('cpu')
+                    hf_model = AutoModelForCausalLM.from_pretrained(model_name).to(device)
                     tokenizer = AutoTokenizer.from_pretrained(model_name)
                     self.model = HookedTransformer.from_pretrained(
                         model_name,
@@ -246,6 +248,9 @@ def main():
     parser = argparse.ArgumentParser(description="Process SNR data for layers.")
     parser.add_argument('--model-name', type=str, required=True, help='Model name or path to the model')
     parser.add_argument('--top-percent', type=int, default=None, help='Top percentage of layers to select, overriding the default')
+    parser.add_argument('--batch-size', type=int, default=1, help='Batch size for SNR calculation (default: 1)')
+    parser.add_argument('--select-all', action='store_true',
+                        help='Non-interactive mode: automatically select all discovered weight types')
     args = parser.parse_args()
 
     # Check for existing SNR results file
@@ -258,10 +263,17 @@ def main():
         modifier.generate_unfrozen_params_yaml(snr_file_path, args.top_percent)
     else:
         print(f"No existing SNR results file found for {args.model_name}. Proceeding with SNR calculation.")
-        batch_size = input_dialog(title="Batch Size", text="Enter the batch size:").run()
-        batch_size = int(batch_size) if batch_size else 1
-        modifier = ModelModifier(model_name=args.model_name, batch_size=batch_size)
-        selected_weight_types = modifier.interactive_select_weights()
+
+        if args.select_all:
+            modifier = ModelModifier(model_name=args.model_name, batch_size=args.batch_size)
+            selected_weight_types = modifier.get_weight_types()
+            print(f"Auto-selected {len(selected_weight_types)} weight types: {selected_weight_types}")
+        else:
+            batch_size = input_dialog(title="Batch Size", text="Enter the batch size:").run()
+            batch_size = int(batch_size) if batch_size else 1
+            modifier = ModelModifier(model_name=args.model_name, batch_size=batch_size)
+            selected_weight_types = modifier.interactive_select_weights()
+
         if selected_weight_types:
             modifier.assess_layers_snr(selected_weight_types)
             modifier.save_snr_to_json()

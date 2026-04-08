@@ -1,0 +1,33 @@
+unfrozen_parameters:
+- ^lm_head.weight$
+- ^model.embed_tokens.weight$
+# self_attn.k_proj layers
+- model.layers.2.self_attn.k_proj
+- model.layers.17.self_attn.k_proj
+# mlp.up_proj layers
+- model.layers.2.mlp.up_proj
+- model.layers.11.mlp.up_proj
+# post_attention_layernorm layers
+- model.layers.0.post_attention_layernorm
+- model.layers.1.post_attention_layernorm
+# model.embed_tokens layers
+# self_attn.o_proj layers
+- model.layers.1.self_attn.o_proj
+- model.layers.2.self_attn.o_proj
+# model.norm layers
+# lm_head layers
+# mlp.down_proj layers
+- model.layers.0.mlp.down_proj
+- model.layers.1.mlp.down_proj
+# self_attn.q_proj layers
+- model.layers.12.self_attn.q_proj
+- model.layers.3.self_attn.q_proj
+# self_attn.v_proj layers
+- model.layers.17.self_attn.v_proj
+- model.layers.13.self_attn.v_proj
+# mlp.gate_proj layers
+- model.layers.1.mlp.gate_proj
+- model.layers.3.mlp.gate_proj
+# input_layernorm layers
+- model.layers.0.input_layernorm
+- model.layers.1.input_layernorm
