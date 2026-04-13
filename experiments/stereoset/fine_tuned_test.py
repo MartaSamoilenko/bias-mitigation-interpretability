@@ -317,25 +317,28 @@ def layer_tracing(model,
 
 def run_experiments_finetuned(run_ids,
                               s3_bucket: str = "modelsfinetuned",
-                              s3_prefix: str = "stereoset_experiments/outputs/llama3.2_1b/fine_tuned_v2/checkpoints"):
+                              s3_prefix: str = "stereoset_experiments/outputs/llama3.2_1b/fine_tuned_v2/checkpoints",
+                              model_name: str = "meta-llama/Llama-3.2-1B",
+                              log_dir: str = "outputs/llama3.2_1b/fine_tuned_v2/logs",
+                              results_dir: str = "outputs/llama3.2_1b/fine_tuned_v2/results"):
     s3_client = boto3.client('s3',
                              aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
                              aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"])
 
-    test_model = HookedTransformer.from_pretrained("meta-llama/Llama-3.2-1B")
+    test_model = HookedTransformer.from_pretrained(model_name)
     test_model.eval()
 
     for run_id in run_ids:
         print(f"\n{'='*60}\nEvaluating run: {run_id}\n{'='*60}")
 
-        log = s3_utils.read_json(f"outputs/llama3.2_1b/fine_tuned_v2/logs/{run_id}.json")
+        log = s3_utils.read_json(f"{log_dir}/{run_id}.json")
         best_epoch = log["best_epoch"] - 1
 
         checkpoint_key = f"{s3_prefix}/best_model_{run_id}_epoch_{best_epoch}.pt"
         local_tmp = f"checkpoints/{run_id}.pt"
         os.makedirs("checkpoints", exist_ok=True)
 
-        results_base = f"outputs/llama3.2_1b/fine_tuned_v2/results/{run_id}"
+        results_base = f"{results_dir}/{run_id}"
         run_acc = True
         if TRACING:
             test_file_path = "data/stereoset/gender_dev_rephrased.json"
@@ -378,17 +381,31 @@ if __name__ == "__main__":
         "--run_id", type=str, default=None,
         help="Evaluate a single run ID instead of all discovered runs.")
     parser.add_argument(
-        "--filter", choices=["all", "dla", "random"], default="all",
+        "--filter", choices=["all", "dla", "random", "snr"], default="all",
         dest="filter_mode",
-        help="all = evaluate all runs; dla = DLA-only; random = random-ablation only.")
+        help="all = evaluate all runs; dla = DLA-only; snr = SNR-only; random = random-ablation only.")
+    parser.add_argument(
+        "--comparison", action="store_true",
+        help="Evaluate comparison experiment checkpoints (different S3 paths / model).")
     args = parser.parse_args()
+
+    if args.comparison:
+        model_name = "gpt2-xl"
+        s3_prefix = "stereoset_experiments/outputs/gpt2-xl/fine_tuned_v2/comparison_checkpoints"
+        log_dir = "stereoset_experiments/outputs/gpt2-xl/fine_tuned_v2/comparison_logs"
+        results_dir = "outputs/gpt2-xl/fine_tuned_v2/comparison_results"
+    else:
+        model_name = "meta-llama/Llama-3.2-1B"
+        s3_prefix = "stereoset_experiments/outputs/llama3.2_1b/fine_tuned_v2/checkpoints"
+        log_dir = "outputs/llama3.2_1b/fine_tuned_v2/logs"
+        results_dir = "outputs/llama3.2_1b/fine_tuned_v2/results"
 
     if args.run_id:
         ids = [args.run_id]
         print(f"Single-run mode: {args.run_id}")
     else:
-        log_keys = s3_utils.list_keys("outputs/llama3.2_1b/fine_tuned_v2/logs/")
-        prefix = s3_utils.s3_key("outputs/llama3.2_1b/fine_tuned_v2/logs/")
+        log_keys = s3_utils.list_keys(log_dir + "/")
+        prefix = s3_utils.s3_key(log_dir + "/")
         ids = [
             k[len(prefix):].replace(".json", "")
             for k in log_keys
@@ -397,10 +414,18 @@ if __name__ == "__main__":
         if args.filter_mode == "random":
             ids = [r for r in ids if "random_attn" in r or "random_mlp" in r]
         elif args.filter_mode == "dla":
-            ids = [r for r in ids if "random" not in r]
+            ids = [r for r in ids if "random" not in r and "snr" not in r]
+        elif args.filter_mode == "snr":
+            ids = [r for r in ids if "snr" in r]
         print(f"Discovered {len(ids)} run(s): {ids}")
 
     if not ids:
         print("No runs to evaluate. Exiting.")
     else:
-        run_experiments_finetuned(ids)
+        run_experiments_finetuned(
+            ids,
+            s3_prefix=s3_prefix,
+            model_name=model_name,
+            log_dir=log_dir,
+            results_dir=results_dir,
+        )

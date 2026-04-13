@@ -4,6 +4,7 @@ Usage:
     python -m experiments.winogender.fine_tuned_test --run_id wino_dpo_attn_0.5_beta0.3_lr1e-05
     python -m experiments.winogender.fine_tuned_test --skip_existing
     python -m experiments.winogender.fine_tuned_test --dataset_path data/winogender/winogender_paired_dataset.json
+    python -m experiments.winogender.fine_tuned_test --comparison --filter snr
 """
 import argparse
 import os
@@ -151,10 +152,18 @@ if __name__ == "__main__":
         "--skip_existing", action="store_true",
         help="Skip runs that already have results on S3.")
     parser.add_argument(
-        "--filter", choices=["all", "dla", "random"], default="all",
+        "--filter", choices=["all", "dla", "random", "snr"], default="all",
         dest="filter_mode",
-        help="all = evaluate all runs; dla = DLA-only; random = random-ablation only.")
+        help="all = evaluate all runs; dla = DLA-only; snr = SNR-only; random = random-ablation only.")
+    parser.add_argument(
+        "--comparison", action="store_true",
+        help="Evaluate comparison experiment checkpoints (different S3 paths).")
     args = parser.parse_args()
+
+    if args.comparison:
+        LOGS_DIR = "outputs/llama3.2_1b/winogender/comparison/logs"
+        S3_PREFIX = "experiments/outputs/llama3.2_1b/winogender/comparison/checkpoints"
+        RESULTS_BASE = "outputs/llama3.2_1b/winogender/comparison/test"
 
     if args.run_id:
         ids = [args.run_id]
@@ -164,7 +173,9 @@ if __name__ == "__main__":
         if args.filter_mode == "random":
             ids = [r for r in ids if "random_attn" in r or "random_mlp" in r]
         elif args.filter_mode == "dla":
-            ids = [r for r in ids if "random" not in r]
+            ids = [r for r in ids if "random" not in r and "snr" not in r]
+        elif args.filter_mode == "snr":
+            ids = [r for r in ids if "snr" in r]
         print(f"Discovered {len(ids)} run(s): {ids}")
 
     if not ids:

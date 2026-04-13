@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PROJECT_DIR="/home/ubuntu/PycharmProjects/diploma"
+PROJECT_DIR="/workspace/bias-mitigation-interpretability"
 cd "$PROJECT_DIR"
 
 # ============================================================================
@@ -48,17 +48,59 @@ fi
 
 echo ""
 echo "=========================================="
-echo "STEP 2: StereoSet DLA vs SNR (GPT-2 XL)"
+echo "STEP 2: StereoSet DLA vs SNR (Llama-3.2-1B)"
 echo "=========================================="
 
-SNR_JSON_GPT2="spectrum/snr_results_gpt2-xl_sorted.json"
+SNR_JSON_GPT2_XL="spectrum/snr_results_gpt2-xl_sorted.json"
+SNR_JSON_GEMMA_2B="spectrum/snr_results_google-gemma-2b_sorted.json"
+SNR_JSON_LLAMA="spectrum/snr_results_meta-llama-Llama-3.2-1B_sorted.json"
 
 # DPO experiments
-echo "--- StereoSet DPO: all methods, all modes ---"
+# echo "--- StereoSet DPO: all methods, all modes ---"
+# python3 -m experiments.stereoset.comparison_finetuning \
+#     --snr-json "$SNR_JSON_GPT2_XL" \
+#     --method snr \
+#     --mode all \
+#     --layer-counts 1 2 4 8 \
+#     --loss-type dpo \
+#     --dpo-beta 0.3 \
+#     --learning-rate 5e-6
+
+# SFT experiments
+# echo "--- StereoSet SFT: all methods, all modes ---"
+# python3 -m experiments.stereoset.comparison_finetuning \
+#     --snr-json "$SNR_JSON_GPT2_XL" \
+#     --method snr \
+#     --mode all \
+#     --layer-counts 1 2 4 8 \
+#     --loss-type sft_improved \
+#     --ul-weight 1.0 \
+#     --learning-rate 5e-6
+
+# python3 -m experiments.stereoset.comparison_finetuning \
+#     --snr-json "$SNR_JSON_GEMMA_2B" \
+#     --method snr \
+#     --mode all \
+#     --layer-counts 1 2 4 8 \
+#     --loss-type dpo \
+#     --dpo-beta 0.3 \
+#     --learning-rate 5e-6
+
+# # SFT experiments
+# echo "--- StereoSet SFT: all methods, all modes ---"
+# python3 -m experiments.stereoset.comparison_finetuning \
+#     --snr-json "$SNR_JSON_GEMMA_2B" \
+#     --method snr \
+#     --mode all \
+#     --layer-counts 1 2 4 8 \
+#     --loss-type sft_improved \
+#     --ul-weight 1.0 \
+#     --learning-rate 5e-6
+
 python3 -m experiments.stereoset.comparison_finetuning \
-    --snr-json "$SNR_JSON_GPT2" \
-    --method all \
-    --mode snr \
+    --snr-json "$SNR_JSON_LLAMA" \
+    --method snr \
+    --mode all \
     --layer-counts 1 2 4 8 \
     --loss-type dpo \
     --dpo-beta 0.3 \
@@ -67,9 +109,9 @@ python3 -m experiments.stereoset.comparison_finetuning \
 # SFT experiments
 echo "--- StereoSet SFT: all methods, all modes ---"
 python3 -m experiments.stereoset.comparison_finetuning \
-    --snr-json "$SNR_JSON_GPT2" \
-    --method all \
-    --mode snr \
+    --snr-json "$SNR_JSON_LLAMA" \
+    --method snr \
+    --mode all \
     --layer-counts 1 2 4 8 \
     --loss-type sft_improved \
     --ul-weight 1.0 \
@@ -78,20 +120,17 @@ python3 -m experiments.stereoset.comparison_finetuning \
 # ============================================================================
 # STEP 3: Winogender comparison experiments (Llama-3.2-1B)
 # ============================================================================
-
 echo ""
 echo "=========================================="
-echo "STEP 3: Winogender DLA vs SNR (Llama-3.2-1B)"
+echo "STEP 3: Winogender DLA vs SNR"
 echo "=========================================="
 
-SNR_JSON_LLAMA="spectrum/snr_results_meta-llama-Llama-3.2-1B_sorted.json"
-
-# DPO experiments
+DPO experiments
 echo "--- Winogender DPO: all methods, all modes ---"
 python3 -m experiments.winogender.comparison_finetuning \
-    --snr-json "$SNR_JSON_LLAMA" \
-    --method all \
-    --mode snr \
+    --snr-json "$SNR_JSON_GPT2_XL" \
+    --method snr \
+    --mode all \
     --layer-counts 1 2 4 8 \
     --loss-type dpo \
     --dpo-beta 0.3 \
@@ -100,13 +139,59 @@ python3 -m experiments.winogender.comparison_finetuning \
 # SFT experiments
 echo "--- Winogender SFT: all methods, all modes ---"
 python3 -m experiments.winogender.comparison_finetuning \
-    --snr-json "$SNR_JSON_LLAMA" \
-    --method all \
-    --mode snr \
+    --snr-json "$SNR_JSON_GPT2_XL" \
+    --method snr \
+    --mode all \
     --layer-counts 1 2 4 8 \
     --loss-type sft_improved \
     --ul-weight 1.0 \
     --learning-rate 5e-6
+
+
+# DPO experiments
+# echo "--- Winogender DPO: all methods, all modes ---"
+# python3 -m experiments.winogender.comparison_finetuning \
+#     --snr-json "$SNR_JSON_GEMMA_2B" \
+#     --method snr \
+#     --mode all \
+#     --layer-counts 1 2 4 8 \
+#     --loss-type dpo \
+#     --dpo-beta 0.3 \
+#     --learning-rate 5e-6
+
+# # SFT experiments
+# echo "--- Winogender SFT: all methods, all modes ---"
+# python3 -m experiments.winogender.comparison_finetuning \
+#     --snr-json "$SNR_JSON_GEMMA_2B" \
+#     --method snr \
+#     --mode all \
+#     --layer-counts 1 2 4 8 \
+#     --loss-type sft_improved \
+#     --ul-weight 1.0 \
+#     --learning-rate 5e-6
+
+
+# DPO experiments
+# echo "--- Winogender DPO: all methods, all modes ---"
+# python3 -m experiments.winogender.comparison_finetuning \
+#     --snr-json "$SNR_JSON_LLAMA" \
+#     --method snr \
+#     --mode all \
+#     --layer-counts 1 2 4 8 \
+#     --loss-type dpo \
+#     --dpo-beta 0.3 \
+#     --learning-rate 5e-6
+
+# SFT experiments
+# echo "--- Winogender SFT: all methods, all modes ---"
+# python3 -m experiments.winogender.comparison_finetuning \
+#     --snr-json "$SNR_JSON_LLAMA" \
+#     --method snr \
+#     --mode all \
+#     --layer-counts 1 2 4 8 \
+#     --loss-type sft_improved \
+#     --ul-weight 1.0 \
+#     --learning-rate 5e-6
 
 echo ""
 echo "=========================================="
