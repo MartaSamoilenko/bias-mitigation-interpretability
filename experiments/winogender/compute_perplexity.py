@@ -7,6 +7,8 @@ Usage:
     python -m experiments.winogender.compute_perplexity --model gpt2-xl --run_id wino_dpo_attn_0.5_beta0.3_lr1e-05
     python -m experiments.winogender.compute_perplexity --model gemma-2b --skip_existing
     python -m experiments.winogender.compute_perplexity --model llama3.2_1b --baseline_only
+    python -m experiments.winogender.compute_perplexity --model llama3.2_1b --comparison --skip_existing
+    python -m experiments.winogender.compute_perplexity --model llama3.2_1b --comparison --filter snr
 """
 import argparse
 import os
@@ -256,9 +258,41 @@ if __name__ == "__main__":
     parser.add_argument(
         "--baseline_only", action="store_true",
         help="Only compute baseline perplexity (no fine-tuned runs).")
+    parser.add_argument(
+        "--comparison", action="store_true",
+        help="Evaluate comparison experiment checkpoints (different S3 paths, Llama only).")
+    parser.add_argument(
+        "--filter", choices=["all", "dla", "snr"], default="all",
+        dest="filter_mode",
+        help="Filter discovered runs: all = all runs; dla = DLA comparison only; snr = SNR only.")
     args = parser.parse_args()
 
-    run_ids = [args.run_id] if args.run_id else None
+    if args.comparison:
+        if args.model != "llama3.2_1b":
+            parser.error("--comparison is only supported for llama3.2_1b")
+        MODEL_CONFIGS["llama3.2_1b"]["log_dir"] = (
+            "outputs/llama3.2_1b/winogender/comparison/logs"
+        )
+        MODEL_CONFIGS["llama3.2_1b"]["checkpoint_prefix"] = (
+            "experiments/outputs/llama3.2_1b/winogender/comparison/checkpoints"
+        )
+        MODEL_CONFIGS["llama3.2_1b"]["results_base"] = (
+            "outputs/llama3.2_1b/winogender/comparison/test"
+        )
+
+    if args.run_id:
+        run_ids = [args.run_id]
+    elif not args.baseline_only and args.filter_mode != "all":
+        cfg = MODEL_CONFIGS[args.model]
+        all_ids = discover_run_ids(cfg["log_dir"])
+        if args.filter_mode == "snr":
+            run_ids = [r for r in all_ids if "snr" in r]
+        elif args.filter_mode == "dla":
+            run_ids = [r for r in all_ids if "snr" not in r]
+        print(f"Filtered to {len(run_ids)} run(s) ({args.filter_mode})")
+    else:
+        run_ids = None
+
     run_perplexity(
         model_key=args.model,
         run_ids=run_ids,

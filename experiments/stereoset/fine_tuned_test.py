@@ -391,8 +391,8 @@ if __name__ == "__main__":
 
     if args.comparison:
         model_name = "gpt2-xl"
-        s3_prefix = "stereoset_experiments/outputs/gpt2-xl/fine_tuned_v2/comparison_checkpoints"
-        log_dir = "stereoset_experiments/outputs/gpt2-xl/fine_tuned_v2/comparison_logs"
+        s3_prefix = "outputs/gpt2-xl/fine_tuned_v2/comparison_checkpoints"
+        log_dir = "outputs/gpt2-xl/fine_tuned_v2/comparison_logs"
         results_dir = "outputs/gpt2-xl/fine_tuned_v2/comparison_results"
     else:
         model_name = "meta-llama/Llama-3.2-1B"
