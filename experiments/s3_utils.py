@@ -21,8 +21,6 @@ def _client():
 
 
 def s3_key(local_path: str) -> str:
-    """Converts a local relative path like 'data/stereoset/test.json'
-    to an S3 key like 'experiments/data/stereoset/test.json'."""
 
     return f"{S3_PREFIX}/{local_path}"
 
@@ -60,7 +58,6 @@ def write_csv(df: pd.DataFrame, path: str):
 
 
 def list_keys(prefix: str) -> list:
-    """List all S3 object keys under the given logical prefix."""
     client = _client()
     keys = []
     paginator = client.get_paginator('list_objects_v2')
@@ -75,7 +72,6 @@ def write_bytes(data: bytes, path: str):
 
 
 def save_plot(fig, path: str):
-    """Save a matplotlib figure to S3 as PDF."""
     buf = io.BytesIO()
     fig.savefig(buf, format='pdf', bbox_inches='tight')
     buf.seek(0)

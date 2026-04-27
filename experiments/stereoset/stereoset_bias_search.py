@@ -51,10 +51,6 @@ def tokenize_candidate(model, word: str, model_name: str) -> list[int] | None:
 
 
 def validate_model_compatibility(model):
-    """
-    Run once after model load to log architectural properties
-    and confirm DLA assumptions hold.
-    """
     cfg = model.cfg
     ln = model.ln_final
     ln_type = type(ln).__name__

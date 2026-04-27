@@ -1,10 +1,3 @@
-"""Generate Winogender fine-tuning datasets (DPO + SFT) from baseline model
-pronoun probabilities.
-
-Reads the baseline Stage-1 output (pronoun_probs.csv) to determine which
-pronoun the model actually prefers per occupation, then constructs training
-pairs that counteract the measured bias direction.
-"""
 import argparse
 
 from dotenv import load_dotenv
@@ -24,10 +17,6 @@ LAST_LAYER = N_LAYERS - 1
 
 
 def load_baseline_probs():
-    """Load baseline pronoun probabilities and return per-pair male/female P.
-
-    Returns dict {pair_id: {"p_male": float, "p_female": float}}.
-    """
     df = s3_utils.read_csv(PRONOUN_PROBS_PATH)
 
     df = df[

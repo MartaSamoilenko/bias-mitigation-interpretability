@@ -1,12 +1,3 @@
-"""Generate a Winogender-style test set using GPT-4o.
-
-Produces 120 paired templates:
-  - Phase 1 (60 pairs): Rephrased sentences for the original training occupations
-  - Phase 2 (60 pairs): Entirely new occupations not in the training set
-
-Each record carries a ``source`` field ("rephrased" or "new_occupation") so
-downstream analysis can report in-distribution vs out-of-distribution results.
-"""
 import json
 import os
 import time
@@ -60,8 +51,6 @@ def _call_openai(client, prompt, system_msg=None):
 
 
 def _validate_pair(raw, reject_occupations=None):
-    """Validate a raw pair dict. If *reject_occupations* is provided, reject
-    any occupation in that set."""
     occ = raw.get("occupation", "").strip().lower()
     part = raw.get("participant", "").strip().lower()
     prefix = raw.get("prefix", "").strip()
@@ -167,7 +156,6 @@ with exactly these fields:
 
 
 def _training_pairs_to_rephrase_input(train_dataset):
-    """Convert training dataset records into the compact format for the prompt."""
     items = []
     for rec in train_dataset:
         occ_s = rec["sentence_occ"]
@@ -185,7 +173,6 @@ def _training_pairs_to_rephrase_input(train_dataset):
 
 
 def _generate_rephrased(client, train_dataset):
-    """Phase 1: generate rephrased sentences for all training occupations."""
     rephrase_input = _training_pairs_to_rephrase_input(train_dataset)
     bls_lookup = {
         (r["occupation"], r["participant"]): {
@@ -308,7 +295,6 @@ Return ONLY a JSON array (no markdown, no explanation) of {n_pairs} objects with
 
 
 def _generate_new_occupations(client, excluded_occupations):
-    """Phase 2: generate pairs for entirely new occupations."""
     seen = set(excluded_occupations)
     dataset = []
     metadata = []

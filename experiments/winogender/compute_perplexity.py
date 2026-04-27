@@ -1,15 +1,3 @@
-"""
-Compute standard next-token perplexity of Winogender test sentences
-under baseline and fine-tuned models.
-
-Usage:
-    python -m experiments.winogender.compute_perplexity --model llama3.2_1b
-    python -m experiments.winogender.compute_perplexity --model gpt2-xl --run_id wino_dpo_attn_0.5_beta0.3_lr1e-05
-    python -m experiments.winogender.compute_perplexity --model gemma-2b --skip_existing
-    python -m experiments.winogender.compute_perplexity --model llama3.2_1b --baseline_only
-    python -m experiments.winogender.compute_perplexity --model llama3.2_1b --comparison --skip_existing
-    python -m experiments.winogender.compute_perplexity --model llama3.2_1b --comparison --filter snr
-"""
 import argparse
 import os
 from copy import deepcopy
@@ -64,7 +52,6 @@ TEST_DATASET_PATH = "data/winogender/winogender_test_dataset.json"
 
 
 def compute_sentence_perplexity(model, text):
-    """Compute per-sentence perplexity via next-token cross-entropy loss."""
     tokens = model.to_tokens(text)
     if tokens.shape[1] < 2:
         return float("nan")
@@ -81,11 +68,6 @@ def compute_sentence_perplexity(model, text):
 
 
 def build_sentences(dataset):
-    """Extract full sentences from the paired Winogender test dataset.
-
-    For each pair, builds occupation and participant sentences using
-    each available pronoun, yielding a list of (pair_id, role, gender, text).
-    """
     sentences = []
     for pair in dataset:
         pair_id = pair["id"]
@@ -110,7 +92,6 @@ def build_sentences(dataset):
 
 
 def compute_perplexity_for_model(model, sentences):
-    """Compute perplexity for all sentences, returning per-sentence and aggregate results."""
     per_sentence = []
     for sent in sentences:
         ppl = compute_sentence_perplexity(model, sent["text"])
@@ -132,7 +113,6 @@ def compute_perplexity_for_model(model, sentences):
 
 
 def _ppl_exists(path):
-    """Check whether perplexity.json already exists at the given S3 path."""
     try:
         existing = s3_utils.list_keys(path)
         return len(existing) > 0
@@ -141,7 +121,6 @@ def _ppl_exists(path):
 
 
 def discover_run_ids(log_dir):
-    """List all fine-tuned run IDs from S3 log files."""
     log_keys = s3_utils.list_keys(log_dir + "/")
     prefix = s3_utils.s3_key(log_dir + "/")
     return [

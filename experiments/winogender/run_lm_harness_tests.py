@@ -69,7 +69,6 @@ MODELS_CONFIG = {
 
 
 def load_finetuned_model(hf_model_name: str, s3_ckpt_prefix: str, run_id: str, epoch: int) -> HookedTransformer:
-    """Download checkpoint from S3 and load into a fresh HookedTransformer."""
     ckpt_key = f"{s3_ckpt_prefix}/best_model_{run_id}_epoch_{epoch}.pt"
     model = HookedTransformer.from_pretrained(hf_model_name)
     with tempfile.NamedTemporaryFile(suffix=".pt", delete=True) as tmp:
@@ -81,7 +80,6 @@ def load_finetuned_model(hf_model_name: str, s3_ckpt_prefix: str, run_id: str, e
 
 
 def evaluate_lm_eval(lens_model: HookedTransformer, tasks: list[str], **kwargs) -> dict:
-    """Adapts HookedTransformer for lm-eval and runs benchmark tasks."""
 
     class HFLikeModelAdapter(nn.Module):
         def __init__(self, model: HookedTransformer):
@@ -122,7 +120,6 @@ def evaluate_lm_eval(lens_model: HookedTransformer, tasks: list[str], **kwargs) 
 
 
 def processing(df_accumulated_impact, df_probability_info, fine_tuned=False, margin=0):
-    """Process probability info to determine model preference for biases."""
     if 'Layer_Accumulated_Prob' in df_accumulated_impact.columns:
         df_accumulated_impact = df_accumulated_impact.drop(columns=['Layer_Accumulated_Prob'])
 
@@ -182,7 +179,6 @@ def processing(df_accumulated_impact, df_probability_info, fine_tuned=False, mar
 
 
 def _build_per_example_pivot(prob_df):
-    """Build per-ID pivot of final-layer accumulated probs."""
     max_layer = prob_df['Layer'].max()
     last_tok_idx = prob_df.groupby(['ID', 'Type', 'Layer'])['Token_Position'].idxmax()
     final = prob_df.loc[last_tok_idx]
@@ -191,7 +187,6 @@ def _build_per_example_pivot(prob_df):
 
 
 def _metrics_from_pivot(pivot):
-    """Compute SS, LMS, ICAT from a pre-built pivot table."""
     n_total = len(pivot)
     related = 0
     n_stereo = 0
@@ -215,13 +210,11 @@ def _metrics_from_pivot(pivot):
 
 
 def compute_metrics(prob_df):
-    """Compute SS, LMS, ICAT from a single model's probability DataFrame."""
     pivot = _build_per_example_pivot(prob_df)
     return _metrics_from_pivot(pivot)
 
 
 def bootstrap_metrics(prob_df, n_boot=10000, seed=42):
-    """Bootstrap confidence intervals for SS, LMS, ICAT."""
     rng = np.random.default_rng(seed)
     pivot = _build_per_example_pivot(prob_df)
     ss_pt, lms_pt, icat_pt = _metrics_from_pivot(pivot)
@@ -245,7 +238,6 @@ def bootstrap_metrics(prob_df, n_boot=10000, seed=42):
 
 
 def permutation_test_ss(baseline_prob_df, finetuned_prob_df, n_perm=10000, seed=42):
-    """Two-sided permutation test for the difference in SS between two models."""
     rng = np.random.default_rng(seed)
 
     pivot_bl = _build_per_example_pivot(baseline_prob_df)
@@ -272,12 +264,10 @@ def permutation_test_ss(baseline_prob_df, finetuned_prob_df, n_perm=10000, seed=
 
 
 def cohens_h(p1, p2):
-    """Cohen's h effect size for two proportions."""
     return 2 * (np.arcsin(np.sqrt(p1)) - np.arcsin(np.sqrt(p2)))
 
 
 def extract_accuracy(task_results: dict) -> float:
-    """Find the primary accuracy metric from a task result dict."""
     for key in task_results:
         if "acc_norm" in key and "stderr" not in key:
             return task_results[key]
@@ -288,7 +278,6 @@ def extract_accuracy(task_results: dict) -> float:
 
 
 def analyze_bias_for_model_family(model_key: str, cfg: dict) -> Tuple[pd.DataFrame, pd.DataFrame, List[str]]:
-    """Analyzes logs and bias results, returning metadata, bias metrics, and top-5 run IDs."""
     print(f"\n{'=' * 60}")
     print(f"Analyzing bias metrics for {model_key} ...")
     print(f"{'=' * 60}")
@@ -384,7 +373,6 @@ def analyze_bias_for_model_family(model_key: str, cfg: dict) -> Tuple[pd.DataFra
 
 def run_lm_harness_benchmarks(model_key: str, cfg: dict, top5_ids: List[str],
                               metadata_df: pd.DataFrame) -> pd.DataFrame:
-    """Evaluates the baseline and top-5 fine-tuned models on LM-Eval benchmark tasks."""
     all_bench_rows = []
 
     print(f"\n{'=' * 60}")

@@ -1,14 +1,3 @@
-"""DLA vs SNR layer-level comparison experiments for StereoSet.
-
-Compares two component selection strategies for bias-mitigation fine-tuning:
-  - DLA: layers ranked by aggregated Direct Logit Attribution impact
-  - SNR: layers ranked by Spectrum Signal-to-Noise Ratio
-
-Both operate at layer granularity (entire layers unfrozen, no per-head
-gradient masks), guaranteeing identical trainable parameter counts for the
-same number of selected layers.
-"""
-
 import gc
 import json
 import os
@@ -39,15 +28,6 @@ load_dotenv()
 def load_snr_layer_ranking(
     snr_json_path: str, component_type: str,
 ) -> List[Tuple[int, float]]:
-    """Load sorted SNR JSON and return layers ranked by aggregated SNR.
-
-    Args:
-        snr_json_path: Path to the *_sorted.json produced by spectrum.py.
-        component_type: ``"attn"`` or ``"mlp"``.
-
-    Returns:
-        List of ``(layer_idx, avg_snr)`` sorted descending by SNR.
-    """
     with open(snr_json_path) as f:
         snr_data = json.load(f)
 
@@ -78,12 +58,6 @@ def load_snr_layer_ranking(
 def select_top_snr_layers(
     snr_json_path: str, component_type: str, n_layers: int,
 ) -> List[int]:
-    """Return top-N layer indices by SNR.
-
-    For ``component_type="both"``, attn and mlp rankings are loaded
-    independently, a combined per-layer score is computed (mean of both
-    where available), and the top-N layers are returned.
-    """
     if component_type in ("attn", "mlp"):
         ranking = load_snr_layer_ranking(snr_json_path, component_type)
         return [layer for layer, _ in ranking[:n_layers]]
@@ -108,7 +82,6 @@ def select_top_snr_layers(
 def select_top_dla_attn_layers(
     df_impact_analysis: pd.DataFrame, n_layers: int,
 ) -> List[int]:
-    """Aggregate head DLA impacts to layer level, return top-N layers."""
     head_df = df_impact_analysis[
         (df_impact_analysis["Model_Preference"] == "stereotype")
         & (df_impact_analysis["Component"].str.startswith("Head"))
@@ -124,7 +97,6 @@ def select_top_dla_attn_layers(
 def select_top_dla_mlp_layers(
     df_impact_analysis: pd.DataFrame, n_layers: int,
 ) -> List[int]:
-    """Return top-N MLP layers by mean DLA accumulated impact."""
     mlp_df = df_impact_analysis[
         (df_impact_analysis["Model_Preference"] == "stereotype")
         & (df_impact_analysis["Component"].str.startswith("MLP"))
@@ -140,7 +112,6 @@ def select_top_dla_mlp_layers(
 def select_top_dla_both_layers(
     df_impact_analysis: pd.DataFrame, n_layers: int,
 ) -> List[int]:
-    """Average DLA impact across all components per layer, return top-N."""
     stereo = df_impact_analysis[
         df_impact_analysis["Model_Preference"] == "stereotype"
     ]
@@ -158,11 +129,6 @@ def configure_trainable_layers(
     layer_indices: List[int],
     mode: str,
 ) -> Tuple[HookedTransformer, int]:
-    """Freeze everything, then unfreeze attn / mlp / both at *layer_indices*.
-
-    Returns ``(model, active_params_count)``.  No gradient-mask hooks are
-    created — entire layers are unfrozen.
-    """
     for param in model.parameters():
         param.requires_grad = False
 
@@ -209,7 +175,6 @@ def run_comparison_experiments(
     modes: List[str],
     layer_counts: List[int],
 ):
-    """Run DLA vs SNR comparison experiments (stereoset)."""
     original_state_dict = deepcopy(model.state_dict())
     df_analysis = df_impact_analysis_selection(df_impact, df_probs)
 

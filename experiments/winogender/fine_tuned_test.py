@@ -1,11 +1,3 @@
-"""
-Usage:
-    python -m experiments.winogender.fine_tuned_test
-    python -m experiments.winogender.fine_tuned_test --run_id wino_dpo_attn_0.5_beta0.3_lr1e-05
-    python -m experiments.winogender.fine_tuned_test --skip_existing
-    python -m experiments.winogender.fine_tuned_test --dataset_path data/winogender/winogender_paired_dataset.json
-    python -m experiments.winogender.fine_tuned_test --comparison --filter snr
-"""
 import argparse
 import os
 from copy import deepcopy
@@ -33,7 +25,6 @@ RESULTS_BASE = "outputs/llama3.2_1b/winogender/fine_tuned/test"
 
 
 def discover_run_ids():
-    """List all Winogender fine-tuned run IDs from S3 log files."""
     log_keys = s3_utils.list_keys(LOGS_DIR + "/")
     prefix = s3_utils.s3_key(LOGS_DIR + "/")
     run_ids = [
@@ -45,7 +36,6 @@ def discover_run_ids():
 
 
 def _results_exist(run_id):
-    """Check whether pronoun_probs.csv already exists for this run."""
     check_path = f"{RESULTS_BASE}/{run_id}/pronoun_probs.csv"
     try:
         existing_keys = s3_utils.list_keys(check_path)
@@ -59,11 +49,6 @@ def run_experiments_finetuned_winogender(
     dataset_path=None,
     skip_existing=False,
 ):
-    """Evaluate multiple fine-tuned Winogender models on the test dataset.
-
-    Loads model once and swaps state dicts between runs to avoid
-    reloading the full model for each checkpoint.
-    """
     if dataset_path is None:
         dataset_path = TEST_DATASET_PATH
 

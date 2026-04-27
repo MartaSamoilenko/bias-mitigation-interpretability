@@ -12,9 +12,6 @@ import s3_utils
 client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
 def generate_rephrased_blank_sentence(sentence):
-    """
-    Rephrases a sentence to place the word 'BLANK' at the end using GPT-4o.
-    """
     if not client:
         return f"[MOCK REPHRASE] {sentence} (BLANK moved to end)"
 
@@ -54,16 +51,6 @@ def generate_rephrased_blank_sentence(sentence):
 
 
 def extract_target_word(context, full_sentence):
-    """
-    Extracts the word that replaced 'BLANK' in the full sentence.
-
-    Args:
-        context (str): e.g., "Scotland is known for BLANK."
-        full_sentence (str): e.g., "Scotland is known for cat."
-
-    Returns:
-        str: The extracted word (e.g., "cat")
-    """
     pattern_str = re.escape(context)
     pattern_str = pattern_str.replace("BLANK", r"(.*)")
     pattern_str = f"^{pattern_str}$"
@@ -103,7 +90,6 @@ def extract_target_word(context, full_sentence):
     return result.rstrip(".,?!;:")
 
 def process_stereoset_chapter(chapter_data):
-    """Processes a single StereoSet intrasentence item into the rephrased format."""
     original_context = chapter_data['context']
 
     clean_context = original_context.rstrip(".,?!;:")
@@ -133,7 +119,6 @@ def process_stereoset_chapter(chapter_data):
 
 
 def rephrase_stereoset(input_path: str, output_path: str, bias_type: str = "gender"):
-    """Rephrase a raw StereoSet JSON so BLANK is at the end, filtering by bias_type."""
     print(f"Loading raw StereoSet from S3: {input_path}")
     raw_data = s3_utils.read_json(input_path)
     items = raw_data.get('data', {}).get('intrasentence', [])
@@ -154,13 +139,6 @@ def rephrase_stereoset(input_path: str, output_path: str, bias_type: str = "gend
     return results
 
 def generate_dpo_triplet_dataset(input_path: str, output_path: str):
-    """Generates triplet DPO pairs: debias + LMS-preserving pairs.
-
-    Per example, produces up to 3 pairs:
-      1) anti-stereotype (chosen) vs stereotype (rejected)        -- debias
-      2) stereotype (chosen) vs unrelated (rejected)              -- LMS
-      3) anti-stereotype (chosen) vs unrelated (rejected)         -- LMS
-    """
     print(f"Reading rephrased data from S3 ({input_path})...")
 
     raw_data = s3_utils.read_json(input_path)
@@ -224,11 +202,6 @@ def generate_dpo_triplet_dataset(input_path: str, output_path: str):
     print(f"Saved to S3 ({output_path})")
 
 def generate_sft_v2_dataset(input_path: str, output_path: str):
-    """Generates improved SFT dataset with stereotype_completion for unlikelihood loss.
-
-    Unlike v1, completions are kept minimal (target word + sentence remainder)
-    with no synthetic continuations, so loss signal is focused on the critical tokens.
-    """
     print(f"Reading rephrased data from S3 ({input_path})...")
 
     raw_data = s3_utils.read_json(input_path)

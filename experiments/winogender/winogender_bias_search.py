@@ -1,11 +1,3 @@
-"""
-DLA tracing and accumulated impact analysis for the Winogender dataset.
-
-Uses paired templates (occupation sentence + participant sentence per pair).
-Stage 1: pronoun preference + DLA on both sentences.
-Stage 2: suffix coreference — compare P(suffix_occ) vs P(suffix_part) using
-the preferred pronoun from the occupation sentence.
-"""
 import argparse
 import os
 
@@ -65,10 +57,6 @@ def tokenize_candidate(model, word: str, model_name: str) -> list[int] | None:
 
 
 def validate_model_compatibility(model):
-    """
-    Run once after model load to log architectural properties
-    and confirm DLA assumptions hold.
-    """
     cfg = model.cfg
     ln = model.ln_final
     ln_type = type(ln).__name__
@@ -115,10 +103,6 @@ def get_ln_final_weight(model) -> torch.Tensor | None:
 
 
 def _pronoun_probs_stage1(model, prefix, pronoun_words, pair_id, sentence_role):
-    """Run a single Stage-1 forward pass on *prefix*.
-
-    Returns a list of row dicts (one per pronoun × token × layer) with DLA.
-    """
     prefix_tokens = model.tokenizer.encode(prefix)
     cache_pos = len(prefix_tokens) - 1
 
@@ -181,7 +165,6 @@ def _pronoun_probs_stage1(model, prefix, pronoun_words, pair_id, sentence_role):
 
 
 def _suffix_log_prob(model, full_text, suffix_start_idx):
-    """Compute log P(suffix tokens | prefix+pronoun) from a full sentence."""
     tokens = model.tokenizer.encode(full_text)
     n_layers = model.cfg.n_layers
 
@@ -200,7 +183,6 @@ def _suffix_log_prob(model, full_text, suffix_start_idx):
 
 
 def paired_tracing(model, dataset, pronoun_probs_path, suffix_probs_path):
-    """Two-stage Winogender bias measurement on paired templates."""
 
     done_ids = set()
     try:
@@ -292,10 +274,6 @@ def paired_tracing(model, dataset, pronoun_probs_path, suffix_probs_path):
 
 
 def accumulative_layer_impact(filename):
-    """Compute accumulated DLA impact from Stage-1 pronoun probabilities.
-
-    Only processes occupation-sentence rows (Sentence_Role == 'occupation').
-    """
     print("Loading CSV from S3 ...")
     df = s3_utils.read_csv(filename)
 

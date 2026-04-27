@@ -23,7 +23,6 @@ PRONOUN_TYPE_LABELS = {
 
 
 def load_occupation_stats():
-    """Return dict mapping occupation -> {bls_pct_female, bergsma_pct_female}."""
     stats = {}
     with open(OCC_STATS_PATH, newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f, delimiter="\t")
@@ -43,7 +42,6 @@ def detect_pronoun_placeholder(sentence):
 
 
 def _parse_template(row):
-    """Parse a single TSV row into a sentence dict."""
     occupation = row["occupation(0)"]
     participant = row["other-participant(1)"]
     answer = int(row["answer"])

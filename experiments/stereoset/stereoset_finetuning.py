@@ -22,7 +22,6 @@ load_dotenv()
 
 @dataclass
 class ExperimentConfig:
-    """Central configuration for the fine-tuning experiments."""
     # Dataset paths
     fine_tune_dataset: str = "data/stereoset/fine-tune-sft/sft_bias_mitigation_v2.jsonl"
     dpo_dataset: str = "data/stereoset/fine-tune-dpo/dpo_pairs_triplet.jsonl"
@@ -55,7 +54,6 @@ class ExperimentConfig:
         os.makedirs(self.checkpoint_dir, exist_ok=True)
 
 def save_checkpoint(model, s3_client=None, s3_bucket=None, s3_key=None):
-    """Saves locally and optionally uploads to S3."""
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pt") as tmp:
         torch.save(model.state_dict(), tmp.name)
@@ -161,9 +159,6 @@ def identify_mlp_from_attn(
     df_impact_analysis: pd.DataFrame,
     percentile: float,
 ) -> Tuple[pd.Series, List[str]]:
-    """Selects MLP layers at the same layers where top-impact attention heads reside.
-    Only MLP component IDs are returned -- attention heads stay frozen.
-    """
     head_df = df_impact_analysis[
         (df_impact_analysis['Model_Preference'] == 'stereotype') &
         (df_impact_analysis['Component'].str.startswith('Head'))
@@ -190,7 +185,6 @@ def identify_mlp_from_attn(
 
 
 def generate_random_heads(n_heads: int, n_layers: int, heads_per_layer: int, seed: int = 42) -> List[str]:
-    """Return n_heads randomly selected component names in '{layer}_Head_{idx}' format."""
     rng = np.random.default_rng(seed)
     all_heads = [f"{layer}_Head_{head}" for layer in range(n_layers) for head in range(heads_per_layer)]
     chosen = rng.choice(all_heads, size=min(n_heads, len(all_heads)), replace=False)
@@ -198,7 +192,6 @@ def generate_random_heads(n_heads: int, n_layers: int, heads_per_layer: int, see
 
 
 def generate_random_mlps(n_mlps: int, n_layers: int, seed: int = 42) -> List[str]:
-    """Return n_mlps randomly selected component names in '{layer}_MLP' format."""
     rng = np.random.default_rng(seed)
     all_mlps = [f"{layer}_MLP" for layer in range(n_layers)]
     chosen = rng.choice(all_mlps, size=min(n_mlps, len(all_mlps)), replace=False)
@@ -241,7 +234,6 @@ from typing import Optional, List
 
 
 def _load_jsonl(json_path: str) -> list:
-    """Loads a JSON or JSONL file from S3."""
     try:
         return s3_utils.read_jsonl(json_path)
     except Exception:
@@ -257,7 +249,6 @@ def _setup_tokenizer(tokenizer):
 
 
 def _tokenize_pair(tokenizer, prompt: str, completion: str, max_length: int):
-    """Tokenizes prompt+completion and returns ids, mask, and prompt length."""
     full_text = prompt + completion
     encoded_full = tokenizer(
         full_text, truncation=True, max_length=max_length,
@@ -275,8 +266,6 @@ def _tokenize_pair(tokenizer, prompt: str, completion: str, max_length: int):
 
 
 class DPODataset(Dataset):
-    """Dataset for DPO training with (prompt, chosen, rejected) triples."""
-
     def __init__(self, json_path: str, tokenizer,
                  target_ids: Optional[List[str]] = None,
                  max_length: int = 128):
@@ -323,8 +312,6 @@ class DPODataset(Dataset):
 
 
 class ImprovedSFTDataset(Dataset):
-    """SFT dataset that also provides the stereotype completion for unlikelihood loss."""
-
     def __init__(self, json_path: str, tokenizer,
                  target_ids: Optional[List[str]] = None,
                  max_length: int = 128):
@@ -416,7 +403,6 @@ class DebiasingDataset(Dataset):
         }
 
 def get_gradient_mask_hook(mask: torch.Tensor):
-    """Creates a hook that applies a binary mask to gradients."""
     def hook(grad):
         return grad * mask
     return hook
@@ -426,10 +412,6 @@ def configure_trainable_parameters(
     target_components: List[str],
     condition: str = 'attn'
 ) -> Tuple[HookedTransformer, int, List[Any]]:
-    """
-    Freezes the model and selectively unfreezes specific attention heads or MLPs.
-    Returns the model, the count of active parameters, and a list of hook handles.
-    """
     if condition != 'full':
         for param in model.parameters():
             param.requires_grad = False
@@ -511,16 +493,6 @@ def _get_s3_client(config):
 
 
 def _sequence_log_probs(logits, token_ids, mask):
-    """Compute per-sequence sum of log-probs over masked completion tokens.
-
-    Args:
-        logits: [batch, seq_len, vocab] model output logits
-        token_ids: [batch, seq_len] input token IDs
-        mask: [batch, seq_len] binary mask, 1 for completion tokens to score
-
-    Returns:
-        [batch] sum of log-probs per sequence
-    """
     log_probs = F.log_softmax(logits, dim=-1)
     # logits[:, t, :] predicts token_ids[:, t+1]
     gathered = torch.gather(log_probs[:, :-1, :], 2, token_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
@@ -530,12 +502,6 @@ def _sequence_log_probs(logits, token_ids, mask):
 
 def compute_preference_accuracy(model, dataloader, ref_model=None, device="cpu",
                                  ref_chosen_lps=None, ref_rejected_lps=None):
-    """Computes the fraction of examples where model prefers chosen over rejected.
-
-    Works with DPO dataloaders. If pre-computed ref log-probs are provided,
-    uses them directly; otherwise falls back to live ref_model forward passes;
-    if neither is available, uses raw log-prob comparison.
-    """
     model.eval()
     correct = 0
     total = 0
@@ -582,7 +548,6 @@ def compute_preference_accuracy(model, dataloader, ref_model=None, device="cpu",
 # DPO Training
 def dpo_loss(policy_chosen_logps, policy_rejected_logps,
              ref_chosen_logps, ref_rejected_logps, beta):
-    """Standard DPO loss from Rafailov et al. 2023."""
     log_ratio_policy = policy_chosen_logps - policy_rejected_logps
     log_ratio_ref = ref_chosen_logps - ref_rejected_logps
     losses = -F.logsigmoid(beta * (log_ratio_policy - log_ratio_ref))
@@ -601,7 +566,6 @@ def _collect_memory_stats():
 
 
 def _precompute_ref_log_probs(ref_model, dataset, batch_size, device):
-    """Run ref_model once over a DPO dataset, return per-sample log-probs on CPU."""
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
     n = len(dataset)
     ref_chosen_lps = torch.zeros(n)
@@ -812,10 +776,6 @@ def run_training_sft_improved(
     run_id: str,
     num_params: int = 0
 ):
-    """Improved SFT: cross-entropy on anti-stereotype + unlikelihood on stereotype.
-
-    val_dpo_loader is a DPODataset loader used for preference accuracy tracking.
-    """
     if torch.cuda.is_available():
         device = "cuda"
         # if torch.cuda.device_count() > 1:
@@ -1008,11 +968,6 @@ def run_all_experiments(
     experiment_types: List[str] = None,
     percentiles: List[float] = None,
 ):
-    """Runs all experiment types and percentiles, skipping duplicate active-param configs.
-
-    For 'full' experiment type, only a single run is performed (ignores percentiles).
-    A summary JSON is saved at the end with all results.
-    """
     if experiment_types is None:
         experiment_types = ALL_EXPERIMENT_TYPES
     if percentiles is None:
