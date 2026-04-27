@@ -2,7 +2,7 @@
 
 This repository contains experiments for **stereotype / gender bias** (StereoSet) and **coreference gender bias** (Winogender) using [Transformer Lens](https://github.com/TransformerLensOrg/TransformerLens) (`HookedTransformer`), **DLA-based layer selection**, **DPO / SFT fine-tuning**, and downstream checks with **[lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness)** (vendored under `lm-evaluation-harness/`). There is a separate **Spectrum** tool (`spectrum/`) that scores layers by **SNR** to choose which parameters to treat as "important" for training configs.
 
-**Important:** most pipelines assume **GPU**, **Hugging Face** access, **AWS S3** (bucket `modelsfinetuned` in code), and credentials in the environment. Without S3 and the same key layout, scripts that read datasets or upload checkpoints will not run as-is.
+**Important:** most pipelines assume **GPU**, **Hugging Face** access, **AWS S3**, and credentials in the environment. Without S3 and the same key layout, scripts that read datasets or upload checkpoints will not run as-is.
 
 ## Requirements
 
