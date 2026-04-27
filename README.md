@@ -6,7 +6,7 @@ You need a GPU for training and most evaluations, Python 3.10 or newer to match 
 
 Set credentials the scripts expect, or place them in a `.env` file at the repo root where `load_dotenv()` applies. Hugging Face (`HF_TOKEN`) is used to access the model. AWS keys (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`) back S3 reads and writes. A few data scripts call the OpenAI API and need `OPENAI_API_KEY`.
 
-"`bash
+```bash
 cd /path/to/diploma
 python -m venv .venv
 source .venv/bin/activate
