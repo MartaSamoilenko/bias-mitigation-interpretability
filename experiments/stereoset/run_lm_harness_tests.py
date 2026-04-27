@@ -53,7 +53,7 @@ MODELS_CONFIG = {
         "hf_name": "google/gemma-2b",
         "s3_log_prefix": "outputs/gemma-2b/fine_tuned_v2/logs/",
         "s3_result_prefix": "outputs/gemma-2b/fine_tuned_v2/results/",
-        "s3_ckpt_prefix": "outputs/gemma-2b/fine_tuned_v2/checkpoints",
+        "s3_ckpt_prefix": "stereoset_experiments/outputs/gemma-2b/fine_tuned_v2/checkpoints",
         "baseline_prob_path": "outputs/gemma-2b/dev_tests/out_DLA_gender_baseline_dev_v2.csv",
         "baseline_impact_path": "outputs/gemma-2b/dev_tests/accumulated_impact_gender_baseline_dev_v2.csv"
     },
@@ -71,11 +71,14 @@ MODELS_CONFIG = {
 def load_finetuned_model(hf_model_name: str, s3_ckpt_prefix: str, run_id: str, epoch: int) -> HookedTransformer:
     """Download checkpoint from S3 and load into a fresh HookedTransformer."""
     ckpt_key = f"{s3_ckpt_prefix}/best_model_{run_id}_epoch_{epoch}.pt"
-    model = HookedTransformer.from_pretrained(hf_model_name)
+    model = HookedTransformer.from_pretrained(hf_model_name, dtype=torch.bfloat16)
     with tempfile.NamedTemporaryFile(suffix=".pt", delete=True) as tmp:
         print(f"Downloading s3://{S3_BUCKET}/{ckpt_key} ...")
         s3_client.download_file(S3_BUCKET, ckpt_key, tmp.name)
-        model.load_state_dict(torch.load(tmp.name, weights_only=True))
+
+        state_dict = torch.load(tmp.name, weights_only=True, map_location="cpu")
+        model.load_state_dict(state_dict)
+        del state_dict
     model.eval()
     return model
 
@@ -89,7 +92,7 @@ def evaluate_lm_eval(lens_model: HookedTransformer, tasks: list[str], **kwargs) 
             self.model = model
             self.tokenizer = model.tokenizer
             self.config = AutoConfig.from_pretrained(model.cfg.tokenizer_name)
-            self.device = model.cfg.device
+            self.device = torch.device(model.cfg.device)
             self.tie_weights = lambda: self
 
         def forward(self, input_ids=None, attention_mask=None, **kwargs):
@@ -112,12 +115,19 @@ def evaluate_lm_eval(lens_model: HookedTransformer, tasks: list[str], **kwargs) 
 
     model = HFLikeModelAdapter(lens_model)
     warnings.filterwarnings("ignore", message="Failed to get model SHA for")
+
+    hflm_wrapper = HFLM(pretrained=model, tokenizer=model.tokenizer, batch_size=1)
+
     results = evaluator.simple_evaluate(
         model=HFLM(pretrained=model, tokenizer=model.tokenizer),
         tasks=tasks,
         verbosity="WARNING",
         **kwargs,
     )
+
+    del hflm_wrapper
+    del model
+
     return results
 
 
@@ -302,7 +312,7 @@ def analyze_bias_for_model_family(model_key: str, cfg: dict) -> Tuple[pd.DataFra
     run_ids = [
         k[len(prefix_str):].replace(".json", "")
         for k in log_keys
-        if k.endswith(".json") and "all_experiment" not in k
+        if k.endswith(".json") and "all_experiment" not in k and "seed" not in k
     ]
 
     runs_metadata = []
@@ -394,19 +404,22 @@ def run_lm_harness_benchmarks(model_key: str, cfg: dict, top5_ids: List[str],
     gc.collect()
     torch.cuda.empty_cache()
 
-    baseline_model = HookedTransformer.from_pretrained(cfg["hf_name"])
-    baseline_model.eval()
-    baseline_res = evaluate_lm_eval(baseline_model, tasks=BENCHMARK_TASKS)
+    if len(all_bench_rows) == 0:
 
-    row = {"model_family": model_key, "run_id": "original_baseline"}
-    for task_name, task_res in baseline_res["results"].items():
-        row[task_name] = extract_accuracy(task_res)
-    print(row)
-    all_bench_rows.append(row)
+        baseline_model = HookedTransformer.from_pretrained(cfg["hf_name"], dtype=torch.bfloat16)
+        baseline_model.eval()
+        baseline_res = evaluate_lm_eval(baseline_model, tasks=BENCHMARK_TASKS)
 
-    del baseline_model
-    gc.collect()
-    torch.cuda.empty_cache()
+        row = {"model_family": model_key, "run_id": "original_baseline"}
+        for task_name, task_res in baseline_res["results"].items():
+            row[task_name] = extract_accuracy(task_res)
+        print(row)
+        all_bench_rows.append(row)
+
+        del baseline_res 
+        del baseline_model
+        gc.collect()
+        torch.cuda.empty_cache()
 
     for rid in top5_ids:
         print(f"\n{'=' * 60}")
@@ -425,9 +438,11 @@ def run_lm_harness_benchmarks(model_key: str, cfg: dict, top5_ids: List[str],
         all_bench_rows.append(row)
         print(row)
 
+        del res 
         del model
         gc.collect()
         torch.cuda.empty_cache()
+
 
     return pd.DataFrame(all_bench_rows)
 
