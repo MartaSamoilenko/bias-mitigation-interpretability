@@ -29,7 +29,7 @@ BENCHMARK_TASKS = [
     "piqa",
     "winogrande",
     "social_iqa",
-    "lambada_standard",
+    "lambada_standard"
 ]
 
 S3_BUCKET = "modelsfinetuned"
@@ -43,27 +43,27 @@ s3_client = boto3.client(
 MODELS_CONFIG = {
     "gpt2-xl": {
         "hf_name": "gpt2-xl",
-        "s3_log_prefix": "outputs/gpt2-xl/fine_tuned/logs/",
-        "s3_result_prefix": "outputs/gpt2-xl/fine_tuned/results/",
-        "s3_ckpt_prefix": "outputs/gpt2-xl/fine_tuned/checkpoints",
-        "baseline_prob_path": "outputs/gpt2-xl/dev_tests/out_DLA_gender_baseline_dev_v2.csv",
-        "baseline_impact_path": "outputs/gpt2-xl/dev_tests/accumulated_impact_gender_baseline_dev_v2.csv"
+        "s3_log_prefix": "outputs/gpt2-xl/winogender/fine_tuned/logs/",
+        "s3_result_prefix": "outputs/gpt2-xl/winogender/fine_tuned/results/",
+        "s3_ckpt_prefix": "outputs/gpt2-xl/winogender/fine_tuned/checkpoints",
+        "baseline_prob_path": "outputs/gpt2-xl/winogender/dev_tests/out_DLA_gender_baseline_dev_v2.csv",
+        "baseline_impact_path": "outputs/gpt2-xl/winogender/dev_tests/accumulated_impact_gender_baseline_dev_v2.csv"
     },
     "gemma-2b": {
         "hf_name": "google/gemma-2b",
-        "s3_log_prefix": "outputs/gemma-2b/fine_tuned_v2/logs/",
-        "s3_result_prefix": "outputs/gemma-2b/fine_tuned_v2/results/",
-        "s3_ckpt_prefix": "outputs/gemma-2b/fine_tuned_v2/checkpoints",
-        "baseline_prob_path": "outputs/gemma-2b/dev_tests/out_DLA_gender_baseline_dev_v2.csv",
-        "baseline_impact_path": "outputs/gemma-2b/dev_tests/accumulated_impact_gender_baseline_dev_v2.csv"
+        "s3_log_prefix": "outputs/gemma-2b/winogender/fine_tuned_v2/logs/",
+        "s3_result_prefix": "outputs/gemma-2b/winogender/fine_tuned_v2/results/",
+        "s3_ckpt_prefix": "outputs/gemma-2b/winogender/fine_tuned_v2/checkpoints",
+        "baseline_prob_path": "outputs/gemma-2b/winogender/dev_tests/out_DLA_gender_baseline_dev_v2.csv",
+        "baseline_impact_path": "outputs/gemma-2b/winogender/dev_tests/accumulated_impact_gender_baseline_dev_v2.csv"
     },
     "llama3.2_1b": {
         "hf_name": "meta-llama/Llama-3.2-1B",
-        "s3_log_prefix": "outputs/llama3.2_1b/fine_tuned_v2/logs/",
-        "s3_result_prefix": "outputs/llama3.2_1b/fine_tuned_v2/results/",
-        "s3_ckpt_prefix": "stereoset_experiments/outputs/llama3.2_1b/fine_tuned_v2/checkpoints",
-        "baseline_prob_path": "outputs/llama3.2_1b/dev_tests/out_DLA_gender_baseline_dev_v2.csv",
-        "baseline_impact_path": "outputs/llama3.2_1b/dev_tests/accumulated_impact_gender_baseline_dev_v2.csv"
+        "s3_log_prefix": "outputs/llama3.2_1b/winogender/fine_tuned_v2/logs/",
+        "s3_result_prefix": "outputs/llama3.2_1b/winogender/fine_tuned_v2/results/",
+        "s3_ckpt_prefix": "outputs/llama3.2_1b/winogender/fine_tuned_v2/checkpoints",
+        "baseline_prob_path": "outputs/llama3.2_1b/winogender/dev_tests/out_DLA_gender_baseline_dev_v2.csv",
+        "baseline_impact_path": "outputs/llama3.2_1b/winogender/dev_tests/accumulated_impact_gender_baseline_dev_v2.csv"
     }
 }
 

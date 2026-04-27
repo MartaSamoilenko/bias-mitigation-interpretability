@@ -2,6 +2,8 @@ crows-pairs
 rome
 EAP-positional
 experiments/.env
+experiments/analysis_notebooks
 .idea
 bias-bench
 plan.md
+run_comparison_experiments.sh

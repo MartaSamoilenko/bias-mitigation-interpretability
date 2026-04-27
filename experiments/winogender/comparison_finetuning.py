@@ -44,9 +44,6 @@ load_dotenv()
 login(token=os.environ["HF_TOKEN"])
 
 
-# ── S3 exists helper (winogender s3_utils lacks this) ────────────────────────
-
-
 def _s3_exists(path: str) -> bool:
     """Check whether an S3 object exists under the winogender prefix."""
     try:
@@ -56,9 +53,6 @@ def _s3_exists(path: str) -> bool:
         return True
     except s3_utils._client().exceptions.ClientError:
         return False
-
-
-# ── SNR layer selection ─────────────────────────────────────────────────────
 
 
 def load_snr_layer_ranking(
@@ -130,8 +124,6 @@ def select_top_snr_layers(
     return [layer for layer, _ in combined[:n_layers]]
 
 
-# ── DLA layer-level selection ────────────────────────────────────────────────
-
 
 def select_top_dla_attn_layers(
     df_impact_analysis: pd.DataFrame, n_layers: int,
@@ -180,9 +172,6 @@ def select_top_dla_both_layers(
     return layer_impact.head(n_layers).index.tolist()
 
 
-# ── Layer-level unfreezing ───────────────────────────────────────────────────
-
-
 def configure_trainable_layers(
     model: HookedTransformer,
     layer_indices: List[int],
@@ -226,9 +215,6 @@ def configure_trainable_layers(
     print(f"Active parameters: {active_params:,} / {total_params:,}\n")
 
     return model, active_params
-
-
-# ── Experiment orchestration ─────────────────────────────────────────────────
 
 
 def run_comparison_experiments(
@@ -281,7 +267,6 @@ def run_comparison_experiments(
                 else:
                     layers = select_top_snr_layers(snr_json_path, mode, n_layers)
 
-                # ── 2. Configure trainable parameters ───────────────
                 model, num_params = configure_trainable_layers(model, layers, mode)
 
                 if num_params == 0:
@@ -291,7 +276,6 @@ def run_comparison_experiments(
                         p.requires_grad = True
                     continue
 
-                # ── 3. Build run_id and check skip ──────────────────
                 if config.loss_type == "dpo":
                     run_id = (
                         f"wino_cmp_dpo_{method}_{mode}_{n_layers}layers"
@@ -311,7 +295,6 @@ def run_comparison_experiments(
                         p.requires_grad = True
                     continue
 
-                # ── 4. Build run config ─────────────────────────────
                 run_config = ExperimentConfig(
                     loss_type=config.loss_type,
                     dpo_beta=config.dpo_beta,
@@ -331,21 +314,18 @@ def run_comparison_experiments(
                     bias_type=config.bias_type,
                 )
 
-                # ── 5. Optimizer ────────────────────────────────────
                 optimizer = torch.optim.AdamW(
                     filter(lambda p: p.requires_grad, model.parameters()),
                     lr=config.learning_rate,
                     weight_decay=0.0,
                 )
 
-                # ── 6. Reference model ──────────────────────────────
                 ref_model = HookedTransformer.from_pretrained(
                     "meta-llama/Llama-3.2-1B",
                 )
                 for param in ref_model.parameters():
                     param.requires_grad = False
 
-                # ── 7. Dataset + training ───────────────────────────
                 result = None
                 try:
                     if config.loss_type == "dpo":
@@ -413,7 +393,6 @@ def run_comparison_experiments(
                         raise ValueError(f"Unknown loss_type: {config.loss_type}")
 
                 finally:
-                    # ── 8. Cleanup ──────────────────────────────────
                     model.load_state_dict(original_state_dict)
                     for p in model.parameters():
                         p.requires_grad = True
@@ -438,8 +417,6 @@ def run_comparison_experiments(
 
     return all_results
 
-
-# ── CLI ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     import argparse

@@ -35,8 +35,6 @@ from experiments.stereoset.stereoset_finetuning import (
 
 load_dotenv()
 
-# ── SNR layer selection ─────────────────────────────────────────────────────
-
 
 def load_snr_layer_ranking(
     snr_json_path: str, component_type: str,
@@ -107,9 +105,6 @@ def select_top_snr_layers(
     return [layer for layer, _ in combined[:n_layers]]
 
 
-# ── DLA layer-level selection ────────────────────────────────────────────────
-
-
 def select_top_dla_attn_layers(
     df_impact_analysis: pd.DataFrame, n_layers: int,
 ) -> List[int]:
@@ -157,8 +152,6 @@ def select_top_dla_both_layers(
     return layer_impact.head(n_layers).index.tolist()
 
 
-# ── Layer-level unfreezing ───────────────────────────────────────────────────
-
 
 def configure_trainable_layers(
     model: HookedTransformer,
@@ -205,9 +198,6 @@ def configure_trainable_layers(
     return model, active_params
 
 
-# ── Experiment orchestration ─────────────────────────────────────────────────
-
-
 def run_comparison_experiments(
     model: HookedTransformer,
     tokenizer,
@@ -243,7 +233,6 @@ def run_comparison_experiments(
                 )
                 print(f"{'=' * 60}")
 
-                # ── 1. Select layers ────────────────────────────────
                 if method == "dla":
                     if mode == "attn":
                         layers = select_top_dla_attn_layers(df_analysis, n_layers)
@@ -254,7 +243,6 @@ def run_comparison_experiments(
                 else:
                     layers = select_top_snr_layers(snr_json_path, mode, n_layers)
 
-                # ── 2. Configure trainable parameters ───────────────
                 model, num_params = configure_trainable_layers(model, layers, mode)
 
                 if num_params == 0:
@@ -264,7 +252,6 @@ def run_comparison_experiments(
                         p.requires_grad = True
                     continue
 
-                # ── 3. Build run_id and check skip ──────────────────
                 if config.loss_type == "dpo":
                     run_id = (
                         f"cmp_dpo_{method}_{mode}_{n_layers}layers"
@@ -284,7 +271,6 @@ def run_comparison_experiments(
                         p.requires_grad = True
                     continue
 
-                # ── 4. Build run config ─────────────────────────────
                 run_config = ExperimentConfig(
                     loss_type=config.loss_type,
                     dpo_beta=config.dpo_beta,
@@ -304,19 +290,16 @@ def run_comparison_experiments(
                     bias_type=config.bias_type,
                 )
 
-                # ── 5. Optimizer ────────────────────────────────────
                 optimizer = torch.optim.AdamW(
                     filter(lambda p: p.requires_grad, model.parameters()),
                     lr=config.learning_rate,
                     weight_decay=0.0,
                 )
 
-                # ── 6. Reference model ──────────────────────────────
                 ref_model = HookedTransformer.from_pretrained("gpt2-xl")
                 for param in ref_model.parameters():
                     param.requires_grad = False
 
-                # ── 7. Dataset + training ───────────────────────────
                 result = None
                 try:
                     if config.loss_type == "dpo":
@@ -404,7 +387,6 @@ def run_comparison_experiments(
                         raise ValueError(f"Unknown loss_type: {config.loss_type}")
 
                 finally:
-                    # ── 8. Cleanup ──────────────────────────────────
                     model.load_state_dict(original_state_dict)
                     for p in model.parameters():
                         p.requires_grad = True

@@ -37,10 +37,6 @@ TARGET_NEW = 60
 MAX_RETRIES = 3
 
 
-# ---------------------------------------------------------------------------
-# OpenAI helper
-# ---------------------------------------------------------------------------
-
 def _call_openai(client, prompt, system_msg=None):
     if system_msg is None:
         system_msg = (
@@ -62,10 +58,6 @@ def _call_openai(client, prompt, system_msg=None):
         text = text.rsplit("```", 1)[0]
     return json.loads(text)
 
-
-# ---------------------------------------------------------------------------
-# Validation & assembly (shared by both phases)
-# ---------------------------------------------------------------------------
 
 def _validate_pair(raw, reject_occupations=None):
     """Validate a raw pair dict. If *reject_occupations* is provided, reject
@@ -364,10 +356,6 @@ def _generate_new_occupations(client, excluded_occupations):
     return dataset, metadata
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-
 def _print_subset_stats(records, label):
     print(f"\n  [{label}] {len(records)} pairs")
     ptypes = {}
@@ -391,19 +379,16 @@ def generate():
     print(f"  {len(train_dataset)} training pairs, "
           f"{len(train_occupations)} unique occupations.")
 
-    # ── Phase 1: rephrased training occupations ───────────────────────────
     print(f"\n{'=' * 60}")
     print(f"Phase 1: Rephrasing {TARGET_REPHRASED} training occupations")
     print(f"{'=' * 60}")
     rephrased_ds, rephrased_meta = _generate_rephrased(client, train_dataset)
 
-    # ── Phase 2: new occupations ──────────────────────────────────────────
     print(f"\n{'=' * 60}")
     print(f"Phase 2: Generating {TARGET_NEW} new-occupation pairs")
     print(f"{'=' * 60}")
     new_ds, new_meta = _generate_new_occupations(client, train_occupations)
 
-    # ── Combine & save ────────────────────────────────────────────────────
     full_dataset = rephrased_ds + new_ds
     full_metadata = rephrased_meta + new_meta
 
@@ -413,7 +398,6 @@ def generate():
     s3_utils.write_json(full_metadata, TEST_METADATA_PATH)
     print(f"  Metadata: {TEST_METADATA_PATH}")
 
-    # ── Summary ───────────────────────────────────────────────────────────
     print(f"\n{'=' * 60}")
     print("Summary")
     print(f"{'=' * 60}")

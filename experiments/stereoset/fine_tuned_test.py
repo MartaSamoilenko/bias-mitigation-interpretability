@@ -70,7 +70,6 @@ def validate_model_compatibility(model):
     ln = model.ln_final
     ln_type = type(ln).__name__
 
-    # --- Norm type report ---
     ln_weight = get_ln_final_weight(model)
     if ln_weight is not None:
         print(f"[OK] ln_final type : {ln_type} — has learnable gamma "
@@ -149,17 +148,12 @@ def accumulative_layer_impact(filename):
     group_cols = ['ID', 'Candidate', 'Type', 'Layer']
     df['Prefix_Prob'] = df.groupby(group_cols)['Layer_Accumulated_Prob'].shift(1)
 
-    # The shift operation creates NaNs for the first token in every group.
-    # For k=1, the prefix probability is 1.0.
     df['Prefix_Prob'] = df['Prefix_Prob'].fillna(1.0)
 
-    # Multiply the raw DLA (Instant impact) by the Prefix_Prob
     print("Calculating Weighted Impacts...")
 
-    # For MLP
     df['Weighted_MLP'] = df['MLP_Logit_Impact'] * df['Prefix_Prob']
 
-    # For Heads (dynamically find all Head columns)
     head_cols = [c for c in df.columns if c.startswith('Head_')]
     weighted_head_cols = []
 
@@ -174,7 +168,6 @@ def accumulative_layer_impact(filename):
     for col in weighted_head_cols:
         agg_dict[col] = 'sum'
 
-    # Group and Sum
     final_df = df.groupby(group_cols).agg(agg_dict).reset_index()
 
     # ID | Candidate | Type | Layer | Component | Accumulated_Impact
@@ -212,7 +205,6 @@ def layer_tracing(model,
 
     all_data = []
 
-    # Check if experiment has already run, if the experiment ran - skip
     try:
         df = s3_utils.read_csv(output_path)
         if 'ID' in df.columns:
@@ -223,7 +215,6 @@ def layer_tracing(model,
                 print("Tracing already complete. Skipping ... ")
                 return df.to_dict('records'), False
             
-            # If partially run, prepopulate all_data so we append to existing rows
             all_data = df.to_dict('records')
             print(f"Resuming from {len(df_ids)} previously processed items...")
     except Exception as e:
@@ -253,8 +244,6 @@ def layer_tracing(model,
         candidates = sub_dict['targets']
 
         for stereotype_key, word in candidates.items():
-            # word_with_space = ' ' + word
-            # target_tokens = model.tokenizer.encode(word_with_space)
 
             target_tokens = tokenize_candidate(model, word, model.cfg.model_name)
 

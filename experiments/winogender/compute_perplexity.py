@@ -175,7 +175,6 @@ def run_perplexity(
     sentences = build_sentences(dataset)
     print(f"Built {len(sentences)} sentences from {len(dataset)} pairs.")
 
-    # --- Baseline ---
     baseline_ppl_path = f"{cfg['baseline_results']}/perplexity.json"
     if skip_existing and _ppl_exists(baseline_ppl_path):
         print(f"Baseline perplexity already exists. Skipping.")
@@ -191,7 +190,6 @@ def run_perplexity(
         print("Baseline-only mode. Done.")
         return
 
-    # --- Fine-tuned runs ---
     if run_ids is None:
         run_ids = discover_run_ids(cfg["log_dir"])
         print(f"Discovered {len(run_ids)} run(s).")

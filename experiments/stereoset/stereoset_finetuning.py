@@ -16,11 +16,7 @@ from torch import nn
 from dotenv import load_dotenv
 
 from experiments.stereoset import s3_utils
-
-# try:
 from transformer_lens import HookedTransformer
-# except ImportError:
-#     HookedTransformer = Any
 
 load_dotenv()
 
