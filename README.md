@@ -15,7 +15,7 @@ pip install -r requirements.txt
 pip install -e ./lm-evaluation-harness
 ```
 
-The `experiments/winogender` tree holds Winogender-related scripts: data preparation (`prepare_data.py`), DLA and bias search (`winogender_bias_search.py`), fine-tuning with a `--mode` flag (`winogender_finetuning.py`), batch testing and comparison modes (`fine_tuned_test.py`, see its module docstring for `python -m' usage from the repo root), perplexity (`compute_perplexity.py`), optional test-set generation with an LLM (`generate_test_set.py`), and benchmark gathering (`run_lm_harness_tests.py`). The Winogender schema templates and their description are in `experiments/winogender/winogender-schemas/`; read `experiments/winogender/winogender-schemas/README.md` for that subproject.
+The `experiments/winogender` tree holds Winogender-related scripts: data preparation (`prepare_data.py`), DLA and bias search (`winogender_bias_search.py`), fine-tuning with a `--mode` flag (`winogender_finetuning.py`), batch testing and comparison modes (`fine_tuned_test.py`), see its module docstring for `python -m` usage from the repo root, perplexity (`compute_perplexity.py`), optional test-set generation with an LLM (`generate_test_set.py`), and benchmark gathering (`run_lm_harness_tests.py`). The Winogender schema templates and their description are in `experiments/winogender/winogender-schemas/`; read `experiments/winogender/winogender-schemas/README.md` for that subproject.
 
 The `experiments/stereoset` tree mirrors the same idea for StereoSet: paraphrase and JSONL building (`stereoset_paraphrase.py`), fine-tuning with `--mode` and `--experiments` on `stereoset_finetuning.py`, batch evaluation (`fine_tuned_test.py`), bias search, and `run_lm_harness_tests.py`.
 
