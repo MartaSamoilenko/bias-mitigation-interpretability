@@ -1,36 +1,3 @@
-"""
-QA pass over experiments/stereoset/gender_test_rephrased.json.
-
-For every entry whose `rephrased_context` differs from `original_context` (i.e. it
-was actually rephrased by stereoset_paraphrase.py), ask an OpenAI reasoning model
-to verify:
-
-  1. "BLANK" is the very last word of `rephrased_context` (only trailing
-     punctuation/quote marks may follow it -- nothing glued directly onto it,
-     e.g. "BLANKd" or "BLANK-aged").
-  2. Substituting "BLANK" with the `stereotype` target produces a meaningful,
-     grammatically correct sentence.
-  3. Substituting "BLANK" with the `anti-stereotype` target produces a
-     meaningful, grammatically correct sentence.
-
-If a check fails, the model is asked to fix it -- preferring to reword/reorder
-`rephrased_context` alone, and only changing the `stereotype`/`anti-stereotype`
-target words (to close synonyms) if no rewording can make both targets fit.
-The `unrelated` target is never touched. The original meaning must be kept.
-
-Entries that were never rephrased (rephrased_context == original_context) are
-passed through unchanged and are not sent to the model.
-
-Usage:
-    python validate_rephrased_contexts.py [--limit N] [--workers N]
-
-Outputs (written next to this script):
-    gender_test_rephrased_fixed.json     Full corrected 767-item dataset.
-    gender_test_rephrased_fix_log.json   Only the entries that were changed,
-                                          with before/after values + explanation.
-    gender_test_rephrased_checkpoint.json  Resume checkpoint (safe to delete).
-"""
-
 import argparse
 import json
 import os

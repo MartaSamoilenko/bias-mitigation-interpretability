@@ -195,7 +195,9 @@ def layer_tracing(model,
                   s3_bucket = None, 
                   checkpoint_key = None, 
                   local_tmp = None,
-                  s3_client = None):
+                  s3_client = None,
+                  use_s3 = True,
+                  local_checkpoint_path = None):
     
     df_ids = []
 
@@ -215,11 +217,15 @@ def layer_tracing(model,
             print(f"Resuming from {len(df_ids)} previously processed items...")
     except Exception as e:
         print(f"Could not load previous trace, starting fresh. (Reason: {e})")
-    
-    print(f"Downloading checkpoint s3://{s3_bucket}/{checkpoint_key} ...")
-    s3_client.download_file(s3_bucket, checkpoint_key, local_tmp)
-    model.load_state_dict(torch.load(local_tmp, weights_only=True))
-    os.remove(local_tmp)
+
+    if use_s3:
+        print(f"Downloading checkpoint s3://{s3_bucket}/{checkpoint_key} ...")
+        s3_client.download_file(s3_bucket, checkpoint_key, local_tmp)
+        model.load_state_dict(torch.load(local_tmp, weights_only=True))
+        os.remove(local_tmp)
+    else:
+        print(f"Loading local checkpoint {local_checkpoint_path} ...")
+        model.load_state_dict(torch.load(local_checkpoint_path, weights_only=True))
     print("Checkpoint loaded.")
 
 
@@ -305,10 +311,14 @@ def run_experiments_finetuned(run_ids,
                               s3_prefix: str = "stereoset_experiments/outputs/llama3.2_1b/fine_tuned_v2/checkpoints",
                               model_name: str = "meta-llama/Llama-3.2-1B",
                               log_dir: str = "outputs/llama3.2_1b/fine_tuned_v2/logs",
-                              results_dir: str = "outputs/llama3.2_1b/fine_tuned_v2/results"):
-    s3_client = boto3.client('s3',
-                             aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
-                             aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"])
+                              results_dir: str = "outputs/llama3.2_1b/fine_tuned_v2/results",
+                              use_s3: bool = True,
+                              checkpoint_dir: str = "../checkpoints"):
+    s3_client = None
+    if use_s3:
+        s3_client = boto3.client('s3',
+                                 aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+                                 aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"])
 
     test_model = HookedTransformer.from_pretrained(model_name)
     test_model.eval()
@@ -318,10 +328,6 @@ def run_experiments_finetuned(run_ids,
 
         log = s3_utils.read_json(f"{log_dir}/{run_id}.json")
         best_epoch = log["best_epoch"] - 1
-
-        checkpoint_key = f"{s3_prefix}/best_model_{run_id}_epoch_{best_epoch}.pt"
-        local_tmp = f"checkpoints/{run_id}.pt"
-        os.makedirs("checkpoints", exist_ok=True)
 
         results_base = f"{results_dir}/{run_id}"
         run_acc = True
@@ -333,13 +339,25 @@ def run_experiments_finetuned(run_ids,
 
             dla_path = f"{results_base}/out_DLA_gender_test.csv"
             print("Starting Tracing on Testing Data...")
-            _, run_acc = layer_tracing(test_model,
-                          test_data, 
-                          dla_path, 
-                          s3_bucket, 
-                          checkpoint_key, 
-                          local_tmp,
-                          s3_client)
+            if use_s3:
+                checkpoint_key = f"{s3_prefix}/best_model_{run_id}_epoch_{best_epoch}.pt"
+                local_tmp = f"checkpoints/{run_id}.pt"
+                os.makedirs("checkpoints", exist_ok=True)
+                _, run_acc = layer_tracing(test_model,
+                              test_data, 
+                              dla_path, 
+                              s3_bucket, 
+                              checkpoint_key, 
+                              local_tmp,
+                              s3_client,
+                              use_s3=True)
+            else:
+                local_checkpoint_path = os.path.join(checkpoint_dir, f"best_model_{run_id}.pt")
+                _, run_acc = layer_tracing(test_model,
+                              test_data,
+                              dla_path,
+                              use_s3=False,
+                              local_checkpoint_path=local_checkpoint_path)
             print("Tracing Complete.")
 
         if ACC_ANALYSIS and run_acc: 
@@ -372,7 +390,17 @@ if __name__ == "__main__":
     parser.add_argument(
         "--comparison", action="store_true",
         help="Evaluate comparison experiment checkpoints (different S3 paths / model).")
+    parser.add_argument(
+        "--no-s3", action="store_true",
+        help="Load checkpoints and results from local disk instead of S3 "
+             "(use when AWS credentials/S3 access are unavailable).")
+    parser.add_argument(
+        "--checkpoint-dir", type=str, default="../checkpoints",
+        help="Local checkpoint directory to read from when --no-s3 is set "
+             "(should match the checkpoint_dir used during training).")
     args = parser.parse_args()
+
+    s3_utils.set_use_s3(not args.no_s3)
 
     if args.comparison:
         model_name = "gpt2-xl"
@@ -413,4 +441,6 @@ if __name__ == "__main__":
             model_name=model_name,
             log_dir=log_dir,
             results_dir=results_dir,
+            use_s3=not args.no_s3,
+            checkpoint_dir=args.checkpoint_dir,
         )

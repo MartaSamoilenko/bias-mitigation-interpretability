@@ -45,6 +45,7 @@ class ExperimentConfig:
     dpo_dataset: str = "data/stereoset/fine-tune-dpo/dpo_pairs_triplet.jsonl"
     train_file_path: str = "data/stereoset/gender_test_rephrased.json"
 
+    use_s3: bool = True
     s3_bucket: str = "modelsfinetuned"
     s3_prefix: str = "stereoset_experiments/outputs/gpt2-xl/fine_tuned_v2/checkpoints"
     checkpoint_dir: str = "../checkpoints"
@@ -67,7 +68,17 @@ class ExperimentConfig:
     def __post_init__(self):
         os.makedirs(self.checkpoint_dir, exist_ok=True)
 
-def save_checkpoint(model, s3_client=None, s3_bucket=None, s3_key=None):
+def save_checkpoint(model, s3_client=None, s3_bucket=None, s3_key=None,
+                     local_dir=None, local_name=None):
+    if local_dir is not None:
+        os.makedirs(local_dir, exist_ok=True)
+        final_path = os.path.join(local_dir, local_name)
+        tmp_path = final_path + ".tmp"
+        torch.save(model.state_dict(), tmp_path)
+        os.replace(tmp_path, final_path)
+        print(f"--> Saved local checkpoint (best so far): {final_path}")
+        return
+
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pt") as tmp:
         torch.save(model.state_dict(), tmp.name)
         try:
@@ -365,7 +376,7 @@ def configure_trainable_parameters(
 
 
 def _get_s3_client(config):
-    if config.s3_bucket:
+    if config.use_s3 and config.s3_bucket:
         return boto3.client(
             's3',
             aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
@@ -606,9 +617,13 @@ def run_training_dpo(
             best_val_loss = avg_val_loss
             best_epoch = epoch + 1
             patience_counter = 0
-            s3_key = f"{config.s3_prefix}/best_model_{run_id}_epoch_{epoch}.pt"
             print(f"--> Improvement detected. Saving...")
-            save_checkpoint(model, s3_client, config.s3_bucket, s3_key)
+            if config.use_s3:
+                s3_key = f"{config.s3_prefix}/best_model_{run_id}_epoch_{epoch}.pt"
+                save_checkpoint(model, s3_client, config.s3_bucket, s3_key)
+            else:
+                save_checkpoint(model, local_dir=config.checkpoint_dir,
+                                 local_name=f"best_model_{run_id}.pt")
         else:
             patience_counter += 1
             if patience_counter >= config.patience:
@@ -787,9 +802,13 @@ def run_training_sft_improved(
             best_val_loss = avg_val_loss
             best_epoch = epoch + 1
             patience_counter = 0
-            s3_key = f"{config.s3_prefix}/best_model_{run_id}_epoch_{epoch}.pt"
             print(f"--> Improvement detected. Saving...")
-            save_checkpoint(model, s3_client, config.s3_bucket, s3_key)
+            if config.use_s3:
+                s3_key = f"{config.s3_prefix}/best_model_{run_id}_epoch_{epoch}.pt"
+                save_checkpoint(model, s3_client, config.s3_bucket, s3_key)
+            else:
+                save_checkpoint(model, local_dir=config.checkpoint_dir,
+                                 local_name=f"best_model_{run_id}.pt")
         else:
             patience_counter += 1
             if patience_counter >= config.patience:
@@ -997,6 +1016,7 @@ def run_all_experiments_winogender(
                     max_token_length=config.max_token_length,
                     fine_tune_dataset=config.fine_tune_dataset,
                     dpo_dataset=config.dpo_dataset,
+                    use_s3=config.use_s3,
                     s3_bucket=config.s3_bucket,
                     s3_prefix=config.s3_prefix,
                     checkpoint_dir=config.checkpoint_dir,
@@ -1110,7 +1130,13 @@ if __name__ == "__main__":
         help="dla = DLA hyper-param sweep (default); "
              "random = random-layer ablation for top configs; "
              "all = DLA then random.")
+    parser.add_argument(
+        "--no-s3", action="store_true",
+        help="Save/load checkpoints and results on local disk instead of S3 "
+             "(use when AWS credentials/S3 access are unavailable).")
     args = parser.parse_args()
+
+    s3_utils.set_use_s3(not args.no_s3)
 
     TOP_N_CONFIGS = [
         {"percentile": 1.0, "loss_type": "dpo", "dpo_beta": 0.3, "learning_rate": 1e-6, "experiment_type": "attn"},
@@ -1140,6 +1166,7 @@ if __name__ == "__main__":
             s3_prefix=S3_PREFIX,
             max_token_length=64,
             batch_size=2,
+            use_s3=not args.no_s3,
             **kwargs,
         )
 
