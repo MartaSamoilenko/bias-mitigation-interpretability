@@ -1,4 +1,4 @@
-# Diploma: bias mitigation and evaluation for language models
+# Bias mitigation and evaluation for language models
 
 This repository holds research code for studying and mitigating gender-related bias in language models. The main work uses the Transformer Lens (HookedTransformer) on StereoSet and Winogender-style tasks, with direct linear attribution to pick layers, DPO, and supervised fine-tuning, and a follow-up evaluation using a local copy of EleutherAI's lm-evaluation-harness. Shared helpers for AWS S3 live under `experiments/s3_utils.py` (the bucket and key layout are fixed in code, so replicating runs off the default infrastructure requires edits or stubs).
 
