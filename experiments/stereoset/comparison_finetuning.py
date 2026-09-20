@@ -247,6 +247,7 @@ def run_comparison_experiments(
                     max_token_length=config.max_token_length,
                     fine_tune_dataset=config.fine_tune_dataset,
                     dpo_dataset=config.dpo_dataset,
+                    use_s3=config.use_s3,
                     s3_bucket=config.s3_bucket,
                     s3_prefix=config.s3_prefix,
                     checkpoint_dir=config.checkpoint_dir,
@@ -416,7 +417,13 @@ if __name__ == "__main__":
     parser.add_argument("--dpo-beta", type=float, default=0.3)
     parser.add_argument("--ul-weight", type=float, default=1.0)
     parser.add_argument("--learning-rate", type=float, default=5e-6)
+    parser.add_argument(
+        "--no-s3", action="store_true",
+        help="Save/load checkpoints and results on local disk instead of S3 "
+             "(use when AWS credentials/S3 access are unavailable).")
     args = parser.parse_args()
+
+    s3_utils.set_use_s3(not args.no_s3)
 
     methods = ["dla", "snr"] if args.method == "all" else [args.method]
     modes = ["attn", "mlp", "both"] if args.mode == "all" else [args.mode]
@@ -440,6 +447,7 @@ if __name__ == "__main__":
         learning_rate=args.learning_rate,
         results_dir="stereoset_experiments/outputs/gpt2-xl/fine_tuned_v2/comparison_logs",
         s3_prefix="stereoset_experiments/outputs/gpt2-xl/fine_tuned_v2/comparison_checkpoints",
+        use_s3=not args.no_s3,
     )
 
     run_comparison_experiments(

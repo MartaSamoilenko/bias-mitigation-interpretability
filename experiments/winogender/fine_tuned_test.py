@@ -48,15 +48,19 @@ def run_experiments_finetuned_winogender(
     run_ids,
     dataset_path=None,
     skip_existing=False,
+    use_s3=True,
+    checkpoint_dir="../checkpoints",
 ):
     if dataset_path is None:
         dataset_path = TEST_DATASET_PATH
 
-    s3_client = boto3.client(
-        "s3",
-        aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
-        aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
-    )
+    s3_client = None
+    if use_s3:
+        s3_client = boto3.client(
+            "s3",
+            aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+            aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+        )
 
     print("Loading model ...")
     model = HookedTransformer.from_pretrained("meta-llama/Llama-3.2-1B")
@@ -67,7 +71,8 @@ def run_experiments_finetuned_winogender(
     dataset = s3_utils.read_json(dataset_path)
     print(f"Loaded {len(dataset)} pairs.")
 
-    os.makedirs("checkpoints", exist_ok=True)
+    if use_s3:
+        os.makedirs("checkpoints", exist_ok=True)
 
     for idx, run_id in enumerate(run_ids):
         print(f"\n{'=' * 60}")
@@ -85,18 +90,28 @@ def run_experiments_finetuned_winogender(
             continue
 
         best_epoch = log["best_epoch"] - 1
-        checkpoint_key = f"{S3_PREFIX}/best_model_{run_id}_epoch_{best_epoch}.pt"
-        local_tmp = f"checkpoints/{run_id}.pt"
 
-        try:
-            print(f"  Downloading s3://{S3_BUCKET}/{checkpoint_key} ...")
-            s3_client.download_file(S3_BUCKET, checkpoint_key, local_tmp)
-        except Exception as e:
-            print(f"  Checkpoint download failed: {e}. Skipping.")
-            continue
+        if use_s3:
+            checkpoint_key = f"{S3_PREFIX}/best_model_{run_id}_epoch_{best_epoch}.pt"
+            local_tmp = f"checkpoints/{run_id}.pt"
 
-        model.load_state_dict(torch.load(local_tmp, weights_only=True))
-        os.remove(local_tmp)
+            try:
+                print(f"  Downloading s3://{S3_BUCKET}/{checkpoint_key} ...")
+                s3_client.download_file(S3_BUCKET, checkpoint_key, local_tmp)
+            except Exception as e:
+                print(f"  Checkpoint download failed: {e}. Skipping.")
+                continue
+
+            model.load_state_dict(torch.load(local_tmp, weights_only=True))
+            os.remove(local_tmp)
+        else:
+            local_checkpoint_path = os.path.join(checkpoint_dir, f"best_model_{run_id}.pt")
+            try:
+                print(f"  Loading local checkpoint {local_checkpoint_path} ...")
+                model.load_state_dict(torch.load(local_checkpoint_path, weights_only=True))
+            except Exception as e:
+                print(f"  Checkpoint load failed: {e}. Skipping.")
+                continue
         print("  Checkpoint loaded.")
 
         ft_base = f"{RESULTS_BASE}/{run_id}"
@@ -143,7 +158,17 @@ if __name__ == "__main__":
     parser.add_argument(
         "--comparison", action="store_true",
         help="Evaluate comparison experiment checkpoints (different S3 paths).")
+    parser.add_argument(
+        "--no-s3", action="store_true",
+        help="Load checkpoints and results from local disk instead of S3 "
+             "(use when AWS credentials/S3 access are unavailable).")
+    parser.add_argument(
+        "--checkpoint-dir", type=str, default="../checkpoints",
+        help="Local checkpoint directory to read from when --no-s3 is set "
+             "(should match the checkpoint_dir used during training).")
     args = parser.parse_args()
+
+    s3_utils.set_use_s3(not args.no_s3)
 
     if args.comparison:
         LOGS_DIR = "outputs/llama3.2_1b/winogender/comparison/logs"
@@ -170,4 +195,6 @@ if __name__ == "__main__":
             ids,
             dataset_path=args.dataset_path,
             skip_existing=args.skip_existing,
+            use_s3=not args.no_s3,
+            checkpoint_dir=args.checkpoint_dir,
         )

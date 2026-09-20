@@ -364,34 +364,38 @@ def run_baseline(split="train", dataset_path=None):
         print(f"Saved accumulated impact to S3: {acc_path}")
 
 
-def run_finetuned(run_id, split="train", dataset_path=None):
+def run_finetuned(run_id, split="train", dataset_path=None, use_s3=True, checkpoint_dir="../checkpoints"):
     if dataset_path is None:
         dataset_path = _SPLIT_DATASETS[split]
-
-    s3_bucket = "modelsfinetuned"
-
-    s3_client = boto3.client(
-        "s3",
-        aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
-        aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
-    )
 
     print(f"Loading model and applying checkpoint for {run_id} ...")
     model = HookedTransformer.from_pretrained("meta-llama/Llama-3.2-1B")
     model.eval()
     validate_model_compatibility(model)
 
-    log = s3_utils.read_json(f"{FT_LOGS_DIR}/{run_id}.json")
-    best_epoch = log["best_epoch"] - 1
+    if use_s3:
+        s3_bucket = "modelsfinetuned"
+        s3_client = boto3.client(
+            "s3",
+            aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+            aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+        )
 
-    checkpoint_key = f"{FT_CHECKPOINTS_PREFIX}/best_model_{run_id}_epoch_{best_epoch}.pt"
-    local_tmp = f"checkpoints/{run_id}.pt"
-    os.makedirs("checkpoints", exist_ok=True)
+        log = s3_utils.read_json(f"{FT_LOGS_DIR}/{run_id}.json")
+        best_epoch = log["best_epoch"] - 1
 
-    print(f"Downloading checkpoint s3://{s3_bucket}/{checkpoint_key} ...")
-    s3_client.download_file(s3_bucket, checkpoint_key, local_tmp)
-    model.load_state_dict(torch.load(local_tmp, weights_only=True))
-    os.remove(local_tmp)
+        checkpoint_key = f"{FT_CHECKPOINTS_PREFIX}/best_model_{run_id}_epoch_{best_epoch}.pt"
+        local_tmp = f"checkpoints/{run_id}.pt"
+        os.makedirs("checkpoints", exist_ok=True)
+
+        print(f"Downloading checkpoint s3://{s3_bucket}/{checkpoint_key} ...")
+        s3_client.download_file(s3_bucket, checkpoint_key, local_tmp)
+        model.load_state_dict(torch.load(local_tmp, weights_only=True))
+        os.remove(local_tmp)
+    else:
+        local_checkpoint_path = os.path.join(checkpoint_dir, f"best_model_{run_id}.pt")
+        print(f"Loading local checkpoint {local_checkpoint_path} ...")
+        model.load_state_dict(torch.load(local_checkpoint_path, weights_only=True))
     print("Checkpoint loaded.")
 
     print(f"Loading Winogender dataset from S3 ({dataset_path}) ...")
@@ -424,9 +428,20 @@ if __name__ == "__main__":
                         help="Dataset split to use (default: train).")
     parser.add_argument("--dataset_path", type=str, default=None,
                         help="Custom dataset path (overrides --split default).")
+    parser.add_argument(
+        "--no-s3", action="store_true",
+        help="Read/write datasets, results and checkpoints on local disk instead of S3 "
+             "(use when AWS credentials/S3 access are unavailable).")
+    parser.add_argument(
+        "--checkpoint-dir", type=str, default="../checkpoints",
+        help="Local checkpoint directory to read from when --no-s3 is set "
+             "(should match the checkpoint_dir used during training).")
     args = parser.parse_args()
 
+    s3_utils.set_use_s3(not args.no_s3)
+
     if args.run_id:
-        run_finetuned(args.run_id, split=args.split, dataset_path=args.dataset_path)
+        run_finetuned(args.run_id, split=args.split, dataset_path=args.dataset_path,
+                     use_s3=not args.no_s3, checkpoint_dir=args.checkpoint_dir)
     else:
         run_baseline(split=args.split, dataset_path=args.dataset_path)

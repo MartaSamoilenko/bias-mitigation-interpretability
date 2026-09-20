@@ -5,8 +5,11 @@ from transformer_lens import HookedTransformer
 from huggingface_hub import login
 import os
 import random
+import sys
 
 import s3_utils
+
+s3_utils.set_use_s3("--no-s3" not in sys.argv)
 
 SENTENCEPIECE_MODELS = {"gemma", "llama", "mistral", "t5"}
 BPE_MODELS = {"gpt2", "gpt-j", "opt", "llama-3"}
@@ -328,6 +331,17 @@ TRACING = True
 ACC_ANALYSIS = True
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="StereoSet DLA bias search")
+    parser.add_argument(
+        "--no-s3", action="store_true",
+        help="Read/write datasets and results on local disk instead of S3 "
+             "(use when AWS credentials/S3 access are unavailable). "
+             "Note: this flag is already honored at import time; see the "
+             "module-level s3_utils.set_use_s3() call near the top of this file.")
+    args = parser.parse_args()
+
     if SPLITTING:
         print("Starting 80/20 Split for Fine-tuning sets...")
 

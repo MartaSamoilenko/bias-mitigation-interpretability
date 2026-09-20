@@ -34,11 +34,18 @@ BENCHMARK_TASKS = [
 
 S3_BUCKET = "modelsfinetuned"
 
-s3_client = boto3.client(
-    "s3",
-    aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
-    aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
-)
+_s3_client = None
+
+
+def _get_s3_client():
+    global _s3_client
+    if _s3_client is None:
+        _s3_client = boto3.client(
+            "s3",
+            aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+            aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+        )
+    return _s3_client
 
 MODELS_CONFIG = {
     "gpt2-xl": {
@@ -68,13 +75,21 @@ MODELS_CONFIG = {
 }
 
 
-def load_finetuned_model(hf_model_name: str, s3_ckpt_prefix: str, run_id: str, epoch: int) -> HookedTransformer:
-    ckpt_key = f"{s3_ckpt_prefix}/best_model_{run_id}_epoch_{epoch}.pt"
+def load_finetuned_model(hf_model_name: str, s3_ckpt_prefix: str, run_id: str, epoch: int,
+                          use_s3: bool = True, checkpoint_dir: str = "../checkpoints") -> HookedTransformer:
     model = HookedTransformer.from_pretrained(hf_model_name)
-    with tempfile.NamedTemporaryFile(suffix=".pt", delete=True) as tmp:
-        print(f"Downloading s3://{S3_BUCKET}/{ckpt_key} ...")
-        s3_client.download_file(S3_BUCKET, ckpt_key, tmp.name)
-        model.load_state_dict(torch.load(tmp.name, weights_only=True))
+
+    if use_s3:
+        ckpt_key = f"{s3_ckpt_prefix}/best_model_{run_id}_epoch_{epoch}.pt"
+        with tempfile.NamedTemporaryFile(suffix=".pt", delete=True) as tmp:
+            print(f"Downloading s3://{S3_BUCKET}/{ckpt_key} ...")
+            _get_s3_client().download_file(S3_BUCKET, ckpt_key, tmp.name)
+            model.load_state_dict(torch.load(tmp.name, weights_only=True))
+    else:
+        local_checkpoint_path = os.path.join(checkpoint_dir, f"best_model_{run_id}.pt")
+        print(f"Loading local checkpoint {local_checkpoint_path} ...")
+        model.load_state_dict(torch.load(local_checkpoint_path, weights_only=True))
+
     model.eval()
     return model
 
@@ -372,7 +387,9 @@ def analyze_bias_for_model_family(model_key: str, cfg: dict) -> Tuple[pd.DataFra
 
 
 def run_lm_harness_benchmarks(model_key: str, cfg: dict, top5_ids: List[str],
-                              metadata_df: pd.DataFrame) -> pd.DataFrame:
+                              metadata_df: pd.DataFrame,
+                              use_s3: bool = True,
+                              checkpoint_dir: str = "../checkpoints") -> pd.DataFrame:
     all_bench_rows = []
 
     print(f"\n{'=' * 60}")
@@ -404,7 +421,8 @@ def run_lm_harness_benchmarks(model_key: str, cfg: dict, top5_ids: List[str],
         meta_row = metadata_df[metadata_df["run_id"] == rid].iloc[0]
         best_epoch = int(meta_row["best_epoch"]) - 1
 
-        model = load_finetuned_model(cfg["hf_name"], cfg["s3_ckpt_prefix"], rid, best_epoch)
+        model = load_finetuned_model(cfg["hf_name"], cfg["s3_ckpt_prefix"], rid, best_epoch,
+                                     use_s3=use_s3, checkpoint_dir=checkpoint_dir)
         res = evaluate_lm_eval(model, tasks=BENCHMARK_TASKS)
 
         row = {"model_family": model_key, "run_id": rid}
@@ -421,11 +439,29 @@ def run_lm_harness_benchmarks(model_key: str, cfg: dict, top5_ids: List[str],
 
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Run lm-evaluation-harness benchmarks against fine-tuned Winogender checkpoints.")
+    parser.add_argument(
+        "--no-s3", action="store_true",
+        help="Load checkpoints and results from local disk instead of S3 "
+             "(use when AWS credentials/S3 access are unavailable).")
+    parser.add_argument(
+        "--checkpoint-dir", type=str, default="../checkpoints",
+        help="Local checkpoint directory to read from when --no-s3 is set "
+             "(should match the checkpoint_dir used during training).")
+    args = parser.parse_args()
+
+    s3_utils.set_use_s3(not args.no_s3)
+
     final_benchmark_results = []
 
     for model_key, cfg in MODELS_CONFIG.items():
         metadata_df, metrics_df, top5_ids = analyze_bias_for_model_family(model_key, cfg)
-        bench_df = run_lm_harness_benchmarks(model_key, cfg, top5_ids, metadata_df)
+        bench_df = run_lm_harness_benchmarks(model_key, cfg, top5_ids, metadata_df,
+                                             use_s3=not args.no_s3,
+                                             checkpoint_dir=args.checkpoint_dir)
         final_benchmark_results.append(bench_df)
 
     combined_bench_df = pd.concat(final_benchmark_results, ignore_index=True)

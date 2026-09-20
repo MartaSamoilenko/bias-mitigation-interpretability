@@ -9,3 +9,15 @@ plan.md
 run_comparison_experiments.sh
 transformer_utils
 transformer_utils_hooked
+outputs
+s3_downloads
+experiments/comparison/mitigation_figures.py
+experiments/comparison/paper_figures.py
+experiments/comparison/analysis.ipynb
+experiments/comparison/RUNNING.md
+experiments/comparison/prepare_generic_text.py
+experiments/comparison/verify_atp.py
+slurm-1240.out
+training_job.sh
+experiments/comparison/dla_error_analysis_plots.ipynb
+experiments/comparison/eap_ig_comparison_plots.ipynb

@@ -33,16 +33,6 @@ load_dotenv()
 login(token=os.environ["HF_TOKEN"])
 
 
-def _s3_exists(path: str) -> bool:
-    try:
-        s3_utils._client().head_object(
-            Bucket=s3_utils.S3_BUCKET, Key=s3_utils.s3_key(path),
-        )
-        return True
-    except s3_utils._client().exceptions.ClientError:
-        return False
-
-
 def load_snr_layer_ranking(
     snr_json_path: str, component_type: str,
 ) -> List[Tuple[int, float]]:
@@ -252,7 +242,7 @@ def run_comparison_experiments(
                     )
 
                 log_path = f"{config.results_dir}/{run_id}.json"
-                if _s3_exists(log_path):
+                if s3_utils.exists(log_path):
                     print(f"Experiment {run_id} already done (log on S3). Skipping.")
                     model.load_state_dict(original_state_dict)
                     for p in model.parameters():
@@ -270,6 +260,7 @@ def run_comparison_experiments(
                     max_token_length=config.max_token_length,
                     fine_tune_dataset=config.fine_tune_dataset,
                     dpo_dataset=config.dpo_dataset,
+                    use_s3=config.use_s3,
                     s3_bucket=config.s3_bucket,
                     s3_prefix=config.s3_prefix,
                     checkpoint_dir=config.checkpoint_dir,
@@ -421,7 +412,13 @@ if __name__ == "__main__":
     parser.add_argument("--dpo-beta", type=float, default=0.3)
     parser.add_argument("--ul-weight", type=float, default=1.0)
     parser.add_argument("--learning-rate", type=float, default=5e-6)
+    parser.add_argument(
+        "--no-s3", action="store_true",
+        help="Save/load checkpoints and results on local disk instead of S3 "
+             "(use when AWS credentials/S3 access are unavailable).")
     args = parser.parse_args()
+
+    s3_utils.set_use_s3(not args.no_s3)
 
     methods = ["dla", "snr"] if args.method == "all" else [args.method]
     modes = ["attn", "mlp", "both"] if args.mode == "all" else [args.mode]
@@ -446,6 +443,7 @@ if __name__ == "__main__":
         dpo_dataset=DPO_DATASET,
         results_dir="outputs/llama3.2_1b/winogender/comparison/logs",
         s3_prefix="experiments/outputs/llama3.2_1b/winogender/comparison/checkpoints",
+        use_s3=not args.no_s3,
     )
 
     run_comparison_experiments(

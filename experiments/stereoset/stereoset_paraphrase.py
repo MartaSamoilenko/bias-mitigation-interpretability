@@ -141,7 +141,9 @@ def rephrase_stereoset(input_path: str, output_path: str, bias_type: str = "gend
 def generate_dpo_triplet_dataset(input_path: str, output_path: str):
     print(f"Reading rephrased data from S3 ({input_path})...")
 
-    raw_data = s3_utils.read_json(input_path)
+    # raw_data = s3_utils.read_json(input_path)
+    with open(input_path, "r") as f:
+        raw_data = json.load(f)
 
     dpo_pairs = []
     n_debias = 0
@@ -196,7 +198,10 @@ def generate_dpo_triplet_dataset(input_path: str, output_path: str):
             })
             n_lms += 2
 
-    s3_utils.write_jsonl(dpo_pairs, output_path)
+    # s3_utils.write_jsonl(dpo_pairs, output_path)
+    with open(output_path, "w") as f:
+        for pair in dpo_pairs:
+            f.write(json.dumps(pair) + "\n")
 
     print(f"Generated {len(dpo_pairs)} total DPO pairs ({n_debias} debias + {n_lms} LMS)")
     print(f"Saved to S3 ({output_path})")
@@ -204,7 +209,11 @@ def generate_dpo_triplet_dataset(input_path: str, output_path: str):
 def generate_sft_v2_dataset(input_path: str, output_path: str):
     print(f"Reading rephrased data from S3 ({input_path})...")
 
-    raw_data = s3_utils.read_json(input_path)
+    # raw_data = s3_utils.read_json(input_path)
+
+    # read json file
+    with open(input_path, "r") as f:
+        raw_data = json.load(f)
 
     sft_examples = []
 
@@ -236,20 +245,36 @@ def generate_sft_v2_dataset(input_path: str, output_path: str):
             "stereotype_completion": stereotype_completion
         })
 
-    s3_utils.write_jsonl(sft_examples, output_path)
+    # s3_utils.write_jsonl(sft_examples, output_path)
+    with open(output_path, "w") as f:
+        for example in sft_examples:
+            f.write(json.dumps(example) + "\n")
 
     print(f"Successfully generated {len(sft_examples)} improved SFT examples.")
     print(f"Saved to S3 ({output_path})")
 
+# if __name__ == "__main__":
+#     rephrase_stereoset("data/stereoset/dev.json", "data/stereoset/gender_dev_rephrased.json")
+#     rephrase_stereoset("data/stereoset/test.json", "data/stereoset/gender_test_rephrased.json")
+
+#     generate_sft_v2_dataset(
+#         "data/stereoset/gender_test_rephrased.json",
+#         "data/stereoset/fine-tune-sft/sft_bias_mitigation_v2.jsonl",
+#     )
+#     generate_dpo_triplet_dataset(
+#         "data/stereoset/gender_test_rephrased.json",
+#         "data/stereoset/fine-tune-dpo/dpo_pairs_triplet.jsonl",
+#     )
+
 if __name__ == "__main__":
-    rephrase_stereoset("data/stereoset/dev.json", "data/stereoset/gender_dev_rephrased.json")
-    rephrase_stereoset("data/stereoset/test.json", "data/stereoset/gender_test_rephrased.json")
+    # rephrase_stereoset("data/stereoset/dev.json", "data/stereoset/gender_dev_rephrased.json")
+    # rephrase_stereoset("data/stereoset/test.json", "data/stereoset/gender_test_rephrased.json")
 
     generate_sft_v2_dataset(
-        "data/stereoset/gender_test_rephrased.json",
-        "data/stereoset/fine-tune-sft/sft_bias_mitigation_v2.jsonl",
+        "gender_test_rephrased_v2.json",
+        "sft_bias_mitigation_v2.jsonl",
     )
     generate_dpo_triplet_dataset(
-        "data/stereoset/gender_test_rephrased.json",
-        "data/stereoset/fine-tune-dpo/dpo_pairs_triplet.jsonl",
+        "gender_test_rephrased_v2.json",
+        "dpo_pairs_triplet_v2.jsonl",
     )
