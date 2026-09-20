@@ -103,6 +103,7 @@ def build_baseline_activations(model, means=None):
 
 def compute_eap_ig(model, tokens, metric_spec, cache, means=None,
                    n_steps=5, ig_rule="midpoint", embed_baseline=None):
+    """Integrated-gradient node attribution with an INTACT forward graph."""
     cfg = model.cfg
     n_layers = cfg.n_layers
 
@@ -142,7 +143,6 @@ def compute_eap_ig(model, tokens, metric_spec, cache, means=None,
         model.add_hook(f"blocks.{n_layers - 1}.hook_resid_post",
                        _capture_resid, dir="fwd")
 
-        # backward hooks read d metric / d a_c through the INTACT network
         store: dict = {}
 
         def _make_bwd(name):
@@ -330,7 +330,6 @@ def compute_summary_eap_ig(eap_df, model_name, mode, ap_df=None,
     cols = [c for c in cols if c in ap_df.columns]
     merged = eap_df.merge(ap_df[cols], on=MERGE_KEYS, how="inner")
 
-    # [S11] a silent inner-join drop used to pass unnoticed
     if len(merged) != len(eap_df):
         print(f"  [WARN] merge kept {len(merged)}/{len(eap_df)} EAP rows — "
               f"the AP run and this run disagree on examples/units. "
@@ -369,6 +368,7 @@ def compute_summary_eap_ig(eap_df, model_name, mode, ap_df=None,
     for name, col in methods.items():
         summary[f"{name}_vs_ap_nmae"] = round(
             nmae_against(merged[col].values, ap, ap), 2)
+
         ratio, s_opt, cal = scale_diagnostics(merged[col].values, ap)
         summary[f"{name}_magnitude_ratio"] = round(ratio, 3)
         summary[f"{name}_l1_scale"] = round(s_opt, 4)
@@ -556,7 +556,11 @@ def main():
     parser = argparse.ArgumentParser(
         description="EAP-IG error analysis vs Activation Patching")
     parser.add_argument("--models", nargs="+", default=DEFAULT_MODELS)
-    parser.add_argument("--n-examples", type=int, default=100)
+    parser.add_argument("--n-examples", type=int, default=0,
+                        help="0 = whole file. Must match the AP run.")
+    parser.add_argument(
+        "--dataset", default="datasets/gender_test_rephrased_v2.json",
+        help="Must match the AP run's --dataset, or the merge drops rows.")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--n-ig-steps", type=int, default=10)
     parser.add_argument("--ig-rule", choices=["midpoint", "right"],
@@ -619,11 +623,15 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Device: {device}")
 
-    dataset = s3_utils.read_json("datasets/gender_test_rephrased_v2.json")
+    dataset = s3_utils.read_json(args.dataset)
     random.seed(args.seed)
-    examples = (random.sample(dataset, args.n_examples)
-                if len(dataset) > args.n_examples else list(dataset))
-    print(f"Sampled {len(examples)} examples (seed={args.seed})\n")
+    if args.n_examples and len(dataset) > args.n_examples:
+        examples = random.sample(dataset, args.n_examples)
+        print(f"Sampled {len(examples)} of {len(dataset)} "
+              f"(seed={args.seed})\n")
+    else:
+        examples = list(dataset)
+        print(f"Using all {len(examples)} examples\n")
 
     if args.convergence_check:
         for model_name in args.models:

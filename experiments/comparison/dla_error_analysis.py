@@ -34,8 +34,15 @@ STEREO_KEYS = ("stereotype", "stereo", "bias", "biased")
 ANTI_KEYS = ("anti-stereotype", "anti_stereotype", "antistereotype",
              "anti", "unbiased")
 
-
 class MetricSpec:
+    """A linear-in-logits metric:  sum_i sign_i * logit(token_i).
+
+    ``logit``      -> one token, sign +1.
+    ``logit_diff`` -> two tokens, signs (+1, -1): stereotype - anti-stereotype.
+
+    ``unit_id`` identifies the evaluation unit within an example; selection
+    metrics group by (example_id, unit_id).  [S3]
+    """
 
     def __init__(self, token_ids, signs, unit_id, label, words):
         assert len(token_ids) == len(signs)
@@ -78,11 +85,6 @@ def _find_key(targets, candidates):
 
 def build_metric_specs(model, example, metric_mode, multi_token_policy,
                        stats):
-    """Return a list of MetricSpec for one example (may be empty).
-
-    ``stats`` is a dict accumulating {"n_candidates", "n_multi_token",
-    "n_skipped"}.
-    """
     targets = example["targets"]
     model_name = model.cfg.model_name
 
@@ -109,7 +111,7 @@ def build_metric_specs(model, example, metric_mode, multi_token_policy,
                                     label=cand_type, words=[word]))
         return specs
 
-    # logit_diff  [M1]
+    # logit_diff
     s_key = _find_key(targets, STEREO_KEYS)
     a_key = _find_key(targets, ANTI_KEYS)
     if s_key is None or a_key is None:
@@ -193,7 +195,6 @@ def validate_model_compatibility(model):
     tag = (f"GQA n_heads={n_heads} n_kv={n_kv}" if n_kv < n_heads
            else f"MHA n_heads={n_heads}")
     print(f"[OK] {tag}")
-    # [S11] gelu_new is NOT a gated activation; report the cfg flag only.
     gated = bool(getattr(cfg, "gated_mlp", False))
     print(f"[OK] act_fn={cfg.act_fn}  gated_mlp={gated}")
     print(f"[READY] '{cfg.model_name}' | layers={cfg.n_layers} | "
@@ -263,11 +264,6 @@ def _attn_out_from_z(model, cache, layer):
 
 @torch.no_grad()
 def compute_attn_gains(model, cache, tol=DECOMP_TOL):
-    """Per-layer diagonal gain applied to the attention write, or None.
-
-    Returns (gains, corrected) where gains[layer] is a [d_model] tensor or
-    None, and ``corrected`` says whether any layer needed one.
-    """
     gains = {}
     corrected = False
     for layer in range(model.cfg.n_layers):
@@ -292,7 +288,6 @@ def compute_attn_gains(model, cache, tol=DECOMP_TOL):
             gain = ((w / S) if w is not None
                     else torch.ones_like(prenorm) / S)
         else:
-            # fallback: recover the diagonal empirically where it is defined
             denom = prenorm.clone()
             floor = 1e-6 * denom.abs().max()
             safe = denom.abs() > floor
@@ -425,7 +420,6 @@ def validate_completeness(model, example, metric_spec, tol=DECOMP_TOL):
 @torch.no_grad()
 def validate_chunk_invariance(model, example, metric_spec, components,
                               softcap, tol=1e-3):
-    """AP must not depend on patch_batch_size (guards hook/row leakage)."""
     context = example["rephrased_context"].split("BLANK")[0].strip()
     tokens = model.to_tokens(context)
     _, cache = model.run_with_cache(tokens, return_type=None)
@@ -506,6 +500,11 @@ def build_mean_baseline_vectors(model, means, gains=None):
 def compute_de(model, cache, metric_spec, comp_vectors, clean_precap,
                softcap=None, c_mean_vectors=None):
     """DE(c) = metric(LN(r)) - metric(LN(r_ablated)) for every component.
+
+    r_ablated is (r - c) for zero mode, (r - c + c_mean) for mean mode.
+    rho = scale(r) / scale(r_ablated) is computed on the ACTUAL ablated
+    residual, so the identity DE = clean*(1-rho) + rho*DLA holds in both
+    modes and can be used as a gate.
     """
     n_layers = model.cfg.n_layers
     r = cache[f"blocks.{n_layers - 1}.hook_resid_post"][0, -1]
@@ -549,7 +548,14 @@ def _clean_postcap(model, cache, metric_spec, softcap):
 
 
 @torch.no_grad()
-def compute_activation_means(model, examples):
+def compute_activation_means(model, examples, positions="last",
+                             extra_texts=None, max_len=256):
+    if positions not in ("last", "all_nonbos"):
+        raise ValueError(
+            f"positions must be 'last' or 'all_nonbos', got {positions!r}")
+    if extra_texts and positions == "last":
+        raise ValueError("extra_texts is only meaningful for 'all_nonbos'")
+
     n_layers = model.cfg.n_layers
     n_heads = model.cfg.n_heads
     device = next(model.parameters()).device
@@ -558,23 +564,39 @@ def compute_activation_means(model, examples):
     mlp_sum: dict = {}
     n_seen = 0
 
-    for example in examples:
-        context = example["rephrased_context"].split("BLANK")[0].strip()
-        tokens = model.to_tokens(context)
+    texts = [ex["rephrased_context"].split("BLANK")[0].strip()
+             for ex in examples]
+    if extra_texts:
+        texts += list(extra_texts)
+    if not texts:
+        raise ValueError("compute_activation_means got no text to average over")
+
+    for text in texts:
+        tokens = model.to_tokens(text)
+        if positions == "all_nonbos":
+            tokens = tokens[:, :max_len]
+            if tokens.shape[1] < 2:      # BOS only
+                continue
         _, cache = model.run_with_cache(tokens, return_type=None)
 
+        sl = slice(-1, None) if positions == "last" else slice(1, None)
         for layer in range(n_layers):
-            z = cache[f"blocks.{layer}.attn.hook_z"][0, -1].float()
+            z = cache[f"blocks.{layer}.attn.hook_z"][0, sl].float()
             for h in range(n_heads):
                 key = (layer, h)
-                head_sum[key] = head_sum.get(key, 0) + z[h]
-            m = cache[f"blocks.{layer}.hook_mlp_out"][0, -1].float()
-            mlp_sum[layer] = mlp_sum.get(layer, 0) + m
-        n_seen += 1
+                head_sum[key] = head_sum.get(key, 0) + z[:, h].sum(0)
+            m = cache[f"blocks.{layer}.hook_mlp_out"][0, sl].float()
+            mlp_sum[layer] = mlp_sum.get(layer, 0) + m.sum(0)
+        n_seen += cache["blocks.0.hook_mlp_out"][0, sl].shape[0]
 
         del cache
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+
+    if n_seen == 0:
+        raise ValueError(
+            "compute_activation_means averaged over 0 positions — every input "
+            "was empty or BOS-only")
 
     dtype = model.W_O.dtype
     head_means = {k: (v / n_seen).to(device=device, dtype=dtype)
@@ -677,9 +699,7 @@ def compute_ap(model, tokens, metric_spec, components, patch_batch_size,
     return ap_precap, ap_postcap
 
 
-# ──────────────────────────────────────────────────────────────────────
 #  Metrics
-# ──────────────────────────────────────────────────────────────────────
 def nmae_against(a, b, denom_source):
     """Sum|a-b| / Sum|denom_source| * 100%."""
     denom = float(np.sum(np.abs(denom_source)))
@@ -690,13 +710,6 @@ def nmae_against(a, b, denom_source):
 
 def nmae_per_unit(records_df, col_a, col_b, denom_col="ap_precap",
                   group_cols=("example_id", "unit_id")):
-    """[S7] Normalise INSIDE each evaluation unit, then take the median.
-
-    The pooled NMAE uses one global denominator, so it is dominated by the few
-    units with the largest |AP| (in GPT-2 XL, layer-0 MLP knockouts with
-    |AP| ~ 10 against a typical |AP| ~ 0.1). This variant is the robust
-    companion number and should be reported next to it.
-    """
     vals = []
     for _, sub in records_df.groupby(list(group_cols)):
         vals.append(nmae_against(sub[col_a].values, sub[col_b].values,
@@ -800,13 +813,11 @@ def rank_biased_overlap(rank_a, rank_b, p=0.9, depth=None):
 
 
 def _rank_indices(values, topk_mode):
-    """Descending order of indices under the chosen convention.  [S8]"""
     v = np.abs(values) if topk_mode == "abs" else values
     return np.argsort(-v, kind="stable")
 
 
 def _mcc(sign_a, sign_b):
-    """Matthews correlation on the sign(+/-) agreement.  [S9]"""
     a = sign_a > 0
     b = sign_b > 0
     tp = np.sum(a & b)
@@ -918,7 +929,6 @@ def compute_summary(records_df, model_name, has_softcap, topk_mode="abs"):
         "total_ci_hi": round(ci_t[1], 2),
     }
 
-    # [S7] robust companions to the pooled NMAE
     for label, ca, cb in [("source_a", "dla", "de_precap"),
                           ("source_b", "de_precap", "ap_precap"),
                           ("total", "dla", "ap_precap")]:
@@ -1097,7 +1107,6 @@ def analyze_model(model_name, examples, patch_batch_size, device,
                 continue
 
             with torch.no_grad():
-
                 gains, corrected = compute_attn_gains(model, cache)
                 postnorm_corrected = postnorm_corrected or corrected
 
@@ -1110,7 +1119,6 @@ def analyze_model(model_name, examples, patch_batch_size, device,
                 per_mode: dict = {}
                 for mode in ablation_modes:
                     cm = c_mean_vecs if mode == "mean" else None
-                    # [S2] baseline-matched DLA per mode
                     dla_mode = dla_zero if cm is None else dla_for_baseline(
                         comp_vecs, u_eff, cm)
                     de_pre, de_post, rho = compute_de(
@@ -1273,7 +1281,17 @@ def main():
         description="DLA error budget: DLA vs Direct Effect vs "
                     "Activation Patching")
     parser.add_argument("--models", nargs="+", default=DEFAULT_MODELS)
-    parser.add_argument("--n-examples", type=int, default=100)
+    parser.add_argument("--n-examples", type=int, default=0,
+                        help="0 = use the whole file. A subsample was only "
+                             "ever a compute budget, never a design choice: "
+                             "AP costs one forward per component per unit, so "
+                             "it is the binding cost. Check "
+                             "subsample_stability.py before choosing a cap.")
+    parser.add_argument(
+        "--dataset", default="datasets/gender_test_rephrased_v2.json",
+        help="DEVELOPMENT set. Selection, means and the error budget all come "
+             "from here; the held-out TEST file is passed to "
+             "mitigation_sweep.py separately.")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--patch-batch-size", type=int, default=16)
     parser.add_argument("--no-s3", action="store_true")
@@ -1313,13 +1331,17 @@ def main():
     print(f"Device: {device}   metric: {args.metric}   "
           f"multi-token: {args.multi_token_policy}")
 
-    dataset = s3_utils.read_json("datasets/gender_test_rephrased_v2.json")
-    print(f"Loaded {len(dataset)} examples")
+    dataset = s3_utils.read_json(args.dataset)
+    print(f"Loaded {len(dataset)} examples from {args.dataset}")
 
     random.seed(args.seed)
-    examples = (random.sample(dataset, args.n_examples)
-                if len(dataset) > args.n_examples else list(dataset))
-    print(f"Sampled {len(examples)} examples (seed={args.seed})\n")
+    if args.n_examples and len(dataset) > args.n_examples:
+        examples = random.sample(dataset, args.n_examples)
+        print(f"Sampled {len(examples)} of {len(dataset)} "
+              f"(seed={args.seed})\n")
+    else:
+        examples = list(dataset)
+        print(f"Using all {len(examples)} examples\n")
 
     output_dir = "outputs/dla_error_analysis"
     suffix = f"_{args.tag}" if args.tag else ""
