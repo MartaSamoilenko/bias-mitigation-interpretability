@@ -110,21 +110,11 @@ Stage 1 (GPU)                    Stage 2 (CPU, ~15 min)
 - **`eap_ig_error_analysis.py`** — same records file schema, adds EAP-IG and
   AtP scores (AtP is EAP-IG with one integration step), merges against the AP
   records for NMAE/rank-agreement summaries.
-- **`paper_figures.py`** + **`subsample_stability.py`** — read the record
-  CSVs, produce every figure/table in the paper (headline NMAE, error budget,
-  rank agreement, calibration, cross-method stability, per-layer/per-component
-  breakdowns) plus `figure_data.json`, so prose can cite numbers without
-  re-deriving them.
 - **`mitigation_sweep.py`** — for each method, jointly ablates its top-k
   components (mean- or zero-ablation) and measures bias reduction (mean
   stereotype − anti-stereotype logit difference, plus StereoSet SS/LMS/ICAT)
   against capability cost (perplexity on held-out generic text) — all on
   held-out StereoSet items disjoint from the selection set.
-- **`mitigation_figures.py`** — gates every downstream number on capability
-  cost (a destroyed model is not a mitigation result — ICAT does not detect
-  this, perplexity does), then produces the Pareto and bias-vs-k figures and
-  the headline "bias reduction at matched capability cost" table with
-  bootstrap CIs over held-out items.
 
 Supporting scripts: `prepare_generic_text.py` (builds the WikiText-103
 perplexity corpus), `validate_mean_baseline.py` (checks whether the
@@ -136,8 +126,7 @@ artifacts, so the abstract can't silently drift from the data),
 `eap_ig_comparison_plots.ipynb` are superseded by `paper_figures.py` and kept
 only for reference.
 
-Minimal run (see RUNNING.md for the validated, full version with tags and
-robustness arms):
+Minimal run:
 
 ```bash
 python experiments/comparison/dla_error_analysis.py --tag dev --no-s3
