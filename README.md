@@ -85,17 +85,7 @@ DE (Direct Effect, the frozen-norm component of DLA's error) — all compared
 against AP (Activation Patching: one forward pass per component, the
 expensive ground truth).
 
-**Pipeline** (four stages, two GPU-expensive, two CPU-cheap):
-
-```
-Stage 1 (GPU)                    Stage 2 (CPU, ~15 min)
-  dla_error_analysis.py    ─┐
-  eap_ig_error_analysis.py ─┼─> paper_figures.py         Table 1, error-budget
-                            │   subsample_stability.py    table, all intrinsic
-                            │                             figures, figure_data.json
-                            └─> Stage 3 (GPU)             Stage 4 (CPU, seconds)
-                                mitigation_sweep.py   ──>  mitigation_figures.py
-```
+**Pipeline** 
 
 - **`dla_error_analysis.py`** — loads a model, runs DLA/DE/AP over sampled
   StereoSet examples under zero- and mean-ablation, decomposes DLA's error
@@ -116,22 +106,13 @@ mean-ablation baseline's position scope is driving a capability-cost number),
 `verify_atp.py` (correctness checks on the AtP implementation),
 `abstract_slots.py` (fills the paper abstract's numeric slots from the current
 artifacts, so the abstract can't silently drift from the data),
-`analysis.ipynb` (scratch analysis). `dla_error_analysis_plots.ipynb` and
-`eap_ig_comparison_plots.ipynb` are superseded by `paper_figures.py` and kept
-only for reference.
+`analysis.ipynb` (scratch analysis).
 
 Minimal run:
 
 ```bash
 python experiments/comparison/dla_error_analysis.py --tag dev --no-s3
 python experiments/comparison/eap_ig_error_analysis.py --tag dev --no-s3
-python experiments/comparison/paper_figures.py --tag dev --out-dir outputs/paper
-python experiments/comparison/subsample_stability.py --tag dev --out-dir outputs/paper
-
-python experiments/comparison/mitigation_sweep.py --tag dev \
-    --generic-text data/wikitext103_valid.txt --no-s3
-python experiments/comparison/mitigation_figures.py \
-    --sweep outputs/mitigation/sweep_dev.csv --out-dir outputs/paper
 ```
 
 `training_job.sh` is the SLURM entry point that runs the headline mitigation
@@ -206,20 +187,6 @@ see its own README for that subproject.
   comparable to Llama's or Gemma's since it was trained on WebText, not
   Wikipedia).
 
-## Outputs
-
-`outputs/` (gitignored) holds every run artifact:
-
-- `outputs/dla_error_analysis/` — per-model, per-mode attribution record CSVs
-  (the Stage-1 output that everything downstream reads).
-- `outputs/mitigation/` — sweep CSVs, per-item bootstrap arrays (`*_items.npz`),
-  and baseline-validation CSVs.
-- `outputs/paper/` — the current, canonical set of figures, LaTeX tables, and
-  `figure_data.json` for the comparison paper.
-- `outputs/paper_dev/`, `outputs/paper_backup_untagged_*` — provenance-check
-  and backup snapshots kept during development.
-- `outputs/archive/` — older attribution record CSVs kept for reference.
-- `outputs/figures/` — figures from the superseded plotting notebooks.
 
 ## Licensing
 
