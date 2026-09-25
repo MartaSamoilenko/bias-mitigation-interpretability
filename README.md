@@ -10,9 +10,7 @@ using mechanistic interpretability. The repo has two layers of work built on
   activation-patching ground truth for gender-bias localization on a StereoSet
   variant, across GPT-2 XL, Llama-3.2-1B and Gemma-2-2B, followed by a
   mitigation sweep that ablates each method's top-k components and measures
-  bias reduction against capability cost. This is written up as a paper; see
-  [`experiments/comparison/RUNNING.md`](experiments/comparison/RUNNING.md) for
-  the full pipeline.
+  bias reduction against capability cost.
 - **`experiments/stereoset/`** and **`experiments/winogender/`** — earlier
   work: direct linear attribution to pick layers, then DPO/SFT fine-tuning on
   StereoSet- and Winogender-style tasks, evaluated with a local copy of
@@ -52,9 +50,7 @@ when a host has no outbound network but the models are already cached.
 
 **Note on `outputs/` and `s3_downloads/`:** both are gitignored, along with a
 few of the newest `experiments/comparison/` scripts and notebooks. A fresh
-clone will not have run artifacts; regenerate them by following
-[`experiments/comparison/RUNNING.md`](experiments/comparison/RUNNING.md) or
-the section-specific scripts below.
+clone will not have run artifacts.
 
 ## Repository map
 
@@ -80,9 +76,7 @@ s3_downloads/        one-off scripts for pulling/deleting S3 experiment data
 
 Four attribution methods, benchmarked against activation patching (the causal
 ground truth), on a gender-focused StereoSet variant, across three
-architectures. Full detail, exact commands, and validation gates live in
-[`experiments/comparison/RUNNING.md`](experiments/comparison/RUNNING.md); this
-is the short version.
+architectures.
 
 **Methods.** DLA (Direct Logit Attribution, one forward pass), AtP
 (Attribution Patching, one backward pass), EAP-IG (Edge Attribution Patching
